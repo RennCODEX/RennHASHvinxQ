@@ -1039,7 +1039,7 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "CRYSTALIZED Broken Heart Nessie"
+    local testFishName = "GEMSTONE Ruby"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
@@ -1273,3 +1273,4 @@ end
 
 print("[FISH LOGGER] ✅ Script loaded successfully!")
 print("[FISH LOGGER] 🆔 Session UUID:", SessionUUID)
+
