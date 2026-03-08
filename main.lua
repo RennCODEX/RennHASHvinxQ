@@ -1426,11 +1426,11 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "GEMSTONE Icebreaker Whale"
+    local testFishName = "FAIRY DUST Sea Eater"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
-    local rarity = "Secret"
+    local rarity = "Forgotten"
     local embedColor = RarityColors[rarity] or 16766763
 
     local testEmbed = {
@@ -1444,8 +1444,8 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "🧬 MUTATION", value = "`" .. mutation .. "`",         inline = true },
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
-                { name = "🎲 CHANCE",   value = "`1/4M`",                       inline = true },
-                { name = "⚖️ WEIGHT",   value = "`600 kg`",                    inline = true }
+                { name = "🎲 CHANCE",   value = "`1/25M`",                       inline = true },
+                { name = "⚖️ WEIGHT",   value = "`1.20M`",                    inline = true }
             },
             footer = {
                 text = string.format("By RENNARUDHA • %s", os.date("%d/%m/%Y %H:%M"))
