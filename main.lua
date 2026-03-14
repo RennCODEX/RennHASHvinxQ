@@ -53,6 +53,11 @@ local populationIntervalSeconds = 10
 local populationCycleLabel
 local populationStatusLabel
 local populationToggleButton
+local populationAddedConnection
+local populationRemovingConnection
+local populationSeenPlayers = {}
+local pendingPopulationJoined = {}
+local pendingPopulationLeft = {}
 
 local function refreshSlotInfo()
     return
@@ -72,11 +77,11 @@ end
 
 local Spacing = {
     xs = 4,
-    sm = 6,
-    md = 10,
-    lg = 14,
-    xl = 16,
-    xxl = 20
+    sm = 8,
+    md = 12,
+    lg = 16,
+    xl = 20,
+    xxl = 24
 }
 
 local FontSize = {
@@ -87,30 +92,30 @@ local FontSize = {
 }
 
 local Radius = {
-    small = 6,
-    medium = 8,
-    large = 12
+    small = 8,
+    medium = 12,
+    large = 16
 }
 
 local ElementHeight = {
-    input   = 30,
-    button  = 30,
-    header  = 44,
-    section = 26
+    input   = 34,
+    button  = 34,
+    header  = 52,
+    section = 28
 }
 
 Theme = {
-    bg           = Color3.fromRGB(6, 26, 44),
-    surface      = Color3.fromRGB(9, 38, 60),
-    surface2     = Color3.fromRGB(13, 54, 82),
-    stroke       = Color3.fromRGB(34, 96, 130),
-    text         = Color3.fromRGB(226, 247, 255),
-    textDim      = Color3.fromRGB(146, 200, 220),
-    accent       = Color3.fromRGB(47, 178, 224),
-    accentStrong = Color3.fromRGB(35, 142, 202),
-    good         = Color3.fromRGB(74, 210, 173),
-    warn         = Color3.fromRGB(255, 202, 120),
-    bad          = Color3.fromRGB(237, 106, 121)
+    bg           = Color3.fromRGB(14, 18, 24),
+    surface      = Color3.fromRGB(21, 27, 35),
+    surface2     = Color3.fromRGB(29, 36, 46),
+    stroke       = Color3.fromRGB(57, 67, 80),
+    text         = Color3.fromRGB(241, 244, 248),
+    textDim      = Color3.fromRGB(154, 163, 174),
+    accent       = Color3.fromRGB(100, 124, 167),
+    accentStrong = Color3.fromRGB(80, 100, 138),
+    good         = Color3.fromRGB(102, 238, 146),
+    warn         = Color3.fromRGB(214, 168, 88),
+    bad          = Color3.fromRGB(232, 92, 104)
 }
 
 ----------------------------------------------------------------
@@ -126,7 +131,10 @@ local RarityByRGB = {
 local RarityColors = {
     ["Legendary"] = 16766763,
     ["Mythical"]  = 16719129,
-    ["Secret"]    = 1622168
+    ["Secret"]    = 1622168,
+    ["Forgotten"] = 5793266,
+    ["Forgotten (Sea Eater)"] = 5793266,
+    ["Custom"] = 5793266
 }
 
 local Mutations = {
@@ -286,6 +294,22 @@ local function cleanFishName(fishName)
     return cleaned
 end
 
+local function isForgottenSeaEaterMatch(fishName)
+    local normalizedRaw = normalizeFishName(fishName)
+    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
+    local target = "sea eater"
+    if normalizedRaw == target or normalizedCleaned == target then
+        return true
+    end
+    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
+        return true
+    end
+    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
+        return true
+    end
+    return false
+end
+
 local function extractAssetId(iconString)
     if not iconString or iconString == "" then
         return nil
@@ -437,7 +461,8 @@ local rarityFilters = {
     ["Mythical"]  = true,
     ["Secret"]    = true,
     ["Legend (Crystalized)"] = true,
-    ["Ruby (Gemstone)"] = true
+    ["Ruby (Gemstone)"] = true,
+    ["Forgotten (Sea Eater)"] = true
 }
 
 local webhookWarningTime = 0
@@ -523,6 +548,20 @@ local function comparePopulationSnapshots(previousSnapshot, currentSnapshot)
     return joined, left, stayed
 end
 
+local function mergePopulationMaps(baseMap, extraMap)
+    local merged = {}
+
+    for userId, data in pairs(baseMap or {}) do
+        merged[userId] = data
+    end
+
+    for userId, data in pairs(extraMap or {}) do
+        merged[userId] = data
+    end
+
+    return merged
+end
+
 local function getPopulationNames(map)
     local names = {}
     for _, data in pairs(map) do
@@ -539,6 +578,114 @@ local function logPopulationList(label, map)
         return
     end
     print(string.format("[POP-MONITOR] %s (%d): %s", label, #names, table.concat(names, ", ")))
+end
+
+local function queuePopulationJoin(player)
+    if not player or not player.UserId then
+        return
+    end
+
+    local userId = player.UserId
+    local payload = {
+        userId = userId,
+        name = player.Name
+    }
+
+    populationSeenPlayers[userId] = payload
+    pendingPopulationJoined[userId] = payload
+    pendingPopulationLeft[userId] = nil
+end
+
+local function queuePopulationLeft(player)
+    if not player or not player.UserId then
+        return
+    end
+
+    local userId = player.UserId
+    local known = populationSeenPlayers[userId]
+    local payload = {
+        userId = userId,
+        name = (known and known.name) or player.Name
+    }
+
+    populationSeenPlayers[userId] = nil
+    pendingPopulationLeft[userId] = payload
+    pendingPopulationJoined[userId] = nil
+end
+
+local function initializePopulationTracking()
+    populationSeenPlayers = {}
+    pendingPopulationJoined = {}
+    pendingPopulationLeft = {}
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        populationSeenPlayers[player.UserId] = {
+            userId = player.UserId,
+            name = player.Name
+        }
+    end
+
+    if populationAddedConnection then
+        populationAddedConnection:Disconnect()
+    end
+    if populationRemovingConnection then
+        populationRemovingConnection:Disconnect()
+    end
+
+    populationAddedConnection = Players.PlayerAdded:Connect(function(player)
+        queuePopulationJoin(player)
+    end)
+
+    populationRemovingConnection = Players.PlayerRemoving:Connect(function(player)
+        queuePopulationLeft(player)
+    end)
+end
+
+local function consumePendingPopulationEvents()
+    local joined = pendingPopulationJoined
+    local left = pendingPopulationLeft
+
+    pendingPopulationJoined = {}
+    pendingPopulationLeft = {}
+
+    return joined, left
+end
+
+local function getPlayerAvatarThumbnail(userId)
+    if not userId or userId <= 0 then
+        return ""
+    end
+
+    local requestFunc = getRequestFunc()
+    if requestFunc then
+        local url = string.format(
+            "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=420x420&format=Png&isCircular=false",
+            userId
+        )
+
+        local success, response = pcall(function()
+            return requestFunc({
+                Url = url,
+                Method = "GET"
+            })
+        end)
+
+        if success and response and response.StatusCode == 200 and response.Body then
+            local jsonOk, jsonData = pcall(function()
+                return HttpService:JSONDecode(response.Body)
+            end)
+
+            local avatarData = jsonOk and jsonData and jsonData.data and jsonData.data[1]
+            if avatarData and avatarData.imageUrl and avatarData.imageUrl ~= "" then
+                return avatarData.imageUrl
+            end
+        end
+    end
+
+    return string.format(
+        "https://tr.rbxcdn.com/180DAY-%d/420/420/AvatarHeadshot/Png/noFilter",
+        userId
+    )
 end
 
 local function refreshPopulationToggleUI()
@@ -561,7 +708,7 @@ local function refreshPopulationToggleUI()
     end
 end
 
-local function sendPopulationDiscordNotification(title, description, color)
+local function sendPopulationDiscordNotification(title, description, color, thumbnailUrl, fields)
     if not populationDcfcConnected then
         return
     end
@@ -581,14 +728,16 @@ local function sendPopulationDiscordNotification(title, description, color)
             title = title,
             description = description,
             color = color or 5793266,
+            thumbnail = thumbnailUrl ~= "" and { url = thumbnailUrl } or nil,
+            fields = fields,
             footer = {
                 text = "#ʀᴇɴɴ-ʙ ᴀᴄᴛɪᴠᴇ ᴍᴏɴɪᴛᴏʀɪɴɢ | " .. popNow()
             }
         }}
     }
 
-    local ok, err = pcall(function()
-        requestFunc({
+    local ok, response = pcall(function()
+        return requestFunc({
             Url = populationWebhookURL,
             Method = "POST",
             Headers = {
@@ -599,7 +748,17 @@ local function sendPopulationDiscordNotification(title, description, color)
     end)
 
     if not ok then
-        warn("[POP-MONITOR] Failed send webhook:", err)
+        warn("[POP-MONITOR] Failed send webhook:", response)
+        return
+    end
+
+    local statusCode = response and (response.StatusCode or response.Status)
+    if statusCode and statusCode >= 400 then
+        warn(string.format(
+            "[POP-MONITOR] Discord webhook rejected request. Status: %s | Body: %s",
+            tostring(statusCode),
+            tostring(response.Body)
+        ))
     end
 end
 
@@ -608,23 +767,42 @@ local function sendPopulationEventsToDiscord(joined, left, cycle)
     local leftNames = getPopulationNames(left)
 
     if #joinedNames > 0 then
-        sendPopulationDiscordNotification(
-            "[ RENN-SERVER ] JOIN DETECTED",
-            string.format("𝗣𝗟𝗔𝗬𝗘𝗥 𝗝𝗢𝗜𝗡 : %d\n%s", #joinedNames, table.concat(joinedNames, "\n")),
-            5763719
-        )
+        for _, data in pairs(joined) do
+            sendPopulationDiscordNotification(
+                "[ RENN-SERVER ] RECONNECT DETECTED",
+                string.format("Player reconnected to server.\n`%s (%d)`", data.name, data.userId),
+                5763719,
+                getPlayerAvatarThumbnail(data.userId),
+                {
+                    { name = "STATUS", value = "`RECONNECTED`", inline = true },
+                    { name = "PLAYER", value = "`" .. data.name .. "`", inline = true },
+                    { name = "USER ID", value = "`" .. data.userId .. "`", inline = true },
+                    { name = "CYCLE", value = "`" .. cycle .. "`", inline = true }
+                }
+            )
+        end
     end
 
     if #leftNames > 0 then
-        sendPopulationDiscordNotification(
-            "[ RENN-SERVER ] LEFT DETECTED",
-            string.format("𝗗𝗜𝗦𝗖𝗢𝗡𝗡𝗘𝗖𝗧 𝗔𝗟𝗘𝗥𝗧 : %d\n%s", #leftNames, table.concat(leftNames, "\n")),
-            15548997
-        )
+        for _, data in pairs(left) do
+            sendPopulationDiscordNotification(
+                "[ RENN-SERVER ] DISCONNECT DETECTED",
+                string.format("Player disconnected from server.\n`%s (%d)`", data.name, data.userId),
+                15548997,
+                getPlayerAvatarThumbnail(data.userId),
+                {
+                    { name = "STATUS", value = "`DISCONNECTED`", inline = true },
+                    { name = "PLAYER", value = "`" .. data.name .. "`", inline = true },
+                    { name = "USER ID", value = "`" .. data.userId .. "`", inline = true },
+                    { name = "CYCLE", value = "`" .. cycle .. "`", inline = true }
+                }
+            )
+        end
     end
 end
 
 local function runPopulationLoop()
+    initializePopulationTracking()
     local previous = buildPopulationSnapshot()
     local cycle = 0
 
@@ -637,7 +815,10 @@ local function runPopulationLoop()
         cycle += 1
 
         local current = buildPopulationSnapshot()
-        local joined, left, stayed = comparePopulationSnapshots(previous, current)
+        local joinedBySnapshot, leftBySnapshot, stayed = comparePopulationSnapshots(previous, current)
+        local joinedByEvent, leftByEvent = consumePendingPopulationEvents()
+        local joined = mergePopulationMaps(joinedBySnapshot, joinedByEvent)
+        local left = mergePopulationMaps(leftBySnapshot, leftByEvent)
 
         print(string.rep("-", 72))
         print(string.format("[POP-MONITOR] %s | Cycle #%d selesai", popNow(), cycle))
@@ -662,6 +843,32 @@ local function runPopulationLoop()
 end
 
 -- MODIFIKASI: Fungsi untuk menentukan filter yang digunakan
+local function buildCatchEmbed(catchData, rarityLabel, embedColor)
+    local mutation = detectMutation(catchData.fish)
+    local cleanedFish = cleanFishName(catchData.fish)
+    local thumbnailUrl = getThumbnailURL(catchData.fish)
+
+    return {
+        embeds = {{
+            title       = "[🔒] RENNB PRIVATE - [ SERVER MONITORING ]",
+            description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
+            color       = embedColor,
+            thumbnail   = { url = thumbnailUrl },
+            fields = {
+                { name = "🐳 FISH",     value = "`" .. cleanedFish      .. "`", inline = true },
+                { name = "🧬 MUTATION", value = "`" .. mutation         .. "`", inline = true },
+                { name = "✨ RARITY",   value = "`" .. rarityLabel      .. "`", inline = true },
+                { name = "👤 PLAYER",   value = "`" .. catchData.player .. "`", inline = true },
+                { name = "🎲 CHANCE",   value = "`" .. catchData.chance .. "`", inline = true },
+                { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
+            },
+            footer = {
+                text = string.format("BY RENNARUDHA • %s", catchData.time)
+            }
+        }}
+    }
+end
+
 local function sendToWebhook(catchData)
     if not isAuthenticated then return end
     if not isSending       then return end
@@ -672,6 +879,29 @@ local function sendToWebhook(catchData)
             warn("[FISH LOGGER] ⚠️ Webhook URL is empty! Please set it in the dashboard.")
             webhookWarningTime = currentTime
         end
+        return
+    end
+
+    local isForgottenSeaEater = isForgottenSeaEaterMatch(catchData.fish)
+    if isForgottenSeaEater then
+        if not rarityFilters["Forgotten (Sea Eater)"] then
+            print("[FISH LOGGER] ⭐️ Skipped: Forgotten (Sea Eater) - filter disabled")
+            return
+        end
+
+        local forgottenRarity = "Forgotten"
+        local forgottenEmbed = buildCatchEmbed(
+            catchData,
+            forgottenRarity,
+            RarityColors[forgottenRarity] or RarityColors["Forgotten (Sea Eater)"] or RarityColors["Custom"] or 5793266
+        )
+
+        task.spawn(function()
+            pcall(function()
+                sendToDiscord(currentWebhookURL, forgottenEmbed, botName, botAvatar)
+                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten (Sea Eater))")
+            end)
+        end)
         return
     end
 
@@ -715,28 +945,7 @@ local function sendToWebhook(catchData)
         return
     end
 
-    local embedColor   = RarityColors[rarity] or 2067276
-    local thumbnailUrl = getThumbnailURL(catchData.fish)
-
-    local embed = {
-        embeds = {{
-            title       = "[🔒] RENNB PRIVATE - [ SERVER MONITORING ]",
-            description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
-            color       = embedColor,
-            thumbnail   = { url = thumbnailUrl },
-            fields = {
-                { name = "🐳 FISH",     value = "`" .. cleanedFish      .. "`", inline = true },
-                { name = "🧬 MUTATION", value = "`" .. mutation         .. "`", inline = true },
-                { name = "✨ RARITY",   value = "`" .. rarity           .. "`", inline = true },
-                { name = "👤 PLAYER",   value = "`" .. catchData.player .. "`", inline = true },
-                { name = "🎲 CHANCE",   value = "`"  .. catchData.chance .. "`",  inline = true },
-                { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
-            },
-            footer = {
-                text = string.format("BY RENNARUDHA • %s", catchData.time)
-            }
-        }}
-    }
+    local embed = buildCatchEmbed(catchData, filterToUse, RarityColors[rarity] or 2067276)
 
     task.spawn(function()
         pcall(function()
@@ -863,6 +1072,14 @@ local function unloadScript()
     isSending = false
     populationMonitorRunning = false
     populationDcfcConnected = false
+    if populationAddedConnection then
+        populationAddedConnection:Disconnect()
+        populationAddedConnection = nil
+    end
+    if populationRemovingConnection then
+        populationRemovingConnection:Disconnect()
+        populationRemovingConnection = nil
+    end
     if screenGui and screenGui.Parent then
         screenGui:Destroy()
     end
@@ -979,7 +1196,7 @@ addCorner(loadingBar, 1)
 
 local dashFrame = Instance.new("Frame")
 dashFrame.Name              = "DashboardFrame"
-dashFrame.Size              = UDim2.new(0, 450, 0, 380)
+dashFrame.Size              = UDim2.new(0, 540, 0, 450)
 dashFrame.Position          = UDim2.new(0.5, 0, 0.5, 0)
 dashFrame.AnchorPoint       = Vector2.new(0.5, 0.5)
 dashFrame.BackgroundColor3  = Theme.bg
@@ -989,7 +1206,8 @@ dashFrame.Draggable         = true
 dashFrame.Visible           = false
 dashFrame.Parent            = screenGui
 addCorner(dashFrame, Radius.large)
-addOceanGradient(dashFrame, Color3.fromRGB(9, 48, 78), Color3.fromRGB(4, 22, 38), 90)
+addOceanGradient(dashFrame, Color3.fromRGB(27, 33, 42), Color3.fromRGB(12, 16, 22), 90)
+addStroke(dashFrame, Theme.stroke, 1)
 
 local dashShadow = Instance.new("ImageLabel")
 dashShadow.Name               = "Shadow"
@@ -1011,7 +1229,7 @@ dashHeader.BackgroundColor3  = Theme.surface2
 dashHeader.BorderSizePixel   = 0
 dashHeader.Parent            = dashFrame
 addCorner(dashHeader, Radius.large)
-addOceanGradient(dashHeader, Color3.fromRGB(16, 76, 114), Color3.fromRGB(10, 44, 74), 0)
+addOceanGradient(dashHeader, Color3.fromRGB(34, 40, 50), Color3.fromRGB(22, 27, 35), 0)
 
 local dashHeaderFix = Instance.new("Frame")
 dashHeaderFix.Size              = UDim2.new(1, 0, 0, Radius.large)
@@ -1021,59 +1239,60 @@ dashHeaderFix.BorderSizePixel   = 0
 dashHeaderFix.Parent            = dashHeader
 
 local dashTitle = Instance.new("TextLabel")
-dashTitle.Size                  = UDim2.new(1, -110, 0, 20)
-dashTitle.Position              = UDim2.new(0, Spacing.lg, 0, Spacing.sm)
+dashTitle.Size                  = UDim2.new(1, -156, 0, 22)
+dashTitle.Position              = UDim2.new(0, Spacing.xl, 0, Spacing.sm)
 dashTitle.BackgroundTransparency = 1
 dashTitle.Font                  = Enum.Font.GothamBold
 dashTitle.TextSize              = FontSize.title
 dashTitle.TextXAlignment        = Enum.TextXAlignment.Left
 dashTitle.TextColor3            = Theme.text
-dashTitle.Text                  = "[🔒] PRIVATE RENN - SERVER MONITORING"
+dashTitle.Text                  = "RENN SERVER MONITOR"
 dashTitle.Parent                = dashHeader
 
 local dashSubtitle = Instance.new("TextLabel")
-dashSubtitle.Size                  = UDim2.new(1, -110, 0, 16)
-dashSubtitle.Position              = UDim2.new(0, Spacing.lg, 0, 26)
+dashSubtitle.Size                  = UDim2.new(1, -156, 0, 16)
+dashSubtitle.Position              = UDim2.new(0, Spacing.xl, 0, 30)
 dashSubtitle.BackgroundTransparency = 1
 dashSubtitle.Font                  = Enum.Font.GothamMedium
 dashSubtitle.TextSize              = FontSize.caption
 dashSubtitle.TextXAlignment        = Enum.TextXAlignment.Left
 dashSubtitle.TextColor3            = Theme.textDim
-dashSubtitle.Text                  = "THE MORE I SWIM - THE MORE IM SINKING"
+dashSubtitle.Text                  = "Fish monitoring and separated DC/FC logging"
 dashSubtitle.Parent                = dashHeader
 
 local hideBtn = Instance.new("TextButton")
-hideBtn.Size                  = UDim2.new(0, 68, 0, 28)
-hideBtn.Position              = UDim2.new(1, -68 - Spacing.md, 0.5, -14)
-hideBtn.BackgroundColor3      = Theme.accentStrong
+hideBtn.Size                  = UDim2.new(0, 88, 0, 30)
+hideBtn.Position              = UDim2.new(1, -88 - Spacing.lg, 0.5, -15)
+hideBtn.BackgroundColor3      = Theme.surface
 hideBtn.BorderSizePixel       = 0
 hideBtn.Font                  = Enum.Font.GothamBold
 hideBtn.TextSize              = FontSize.body
 hideBtn.TextColor3            = Theme.text
-hideBtn.Text                  = "Hide"
+hideBtn.Text                  = "MINIMIZE"
 hideBtn.AutoButtonColor       = true
 hideBtn.Parent                = dashHeader
 addCorner(hideBtn, Radius.medium)
+addStroke(hideBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, hideBtn)
 
 local minimizeBtn = Instance.new("TextButton")
 minimizeBtn.Name            = "MinimizeBtn"
-minimizeBtn.Size            = UDim2.new(0, 230, 0, 36)
-minimizeBtn.Position        = UDim2.new(0, Spacing.md, 0.5, -18)
+minimizeBtn.Size            = UDim2.new(0, 42, 0, 42)
+minimizeBtn.Position        = UDim2.new(0, Spacing.lg, 0.5, -21)
 minimizeBtn.AnchorPoint     = Vector2.new(0, 0.5)
-minimizeBtn.BackgroundColor3= Theme.good
+minimizeBtn.BackgroundColor3= Theme.surface
 minimizeBtn.BorderSizePixel = 0
-minimizeBtn.Font            = Enum.Font.GothamBold
-minimizeBtn.TextSize        = FontSize.body
-minimizeBtn.TextColor3      = Theme.text
-minimizeBtn.Text            = "🎣 Discord Monitor: ON"
+minimizeBtn.Font            = Enum.Font.GothamBlack
+minimizeBtn.TextSize        = 18
+minimizeBtn.TextColor3      = Theme.good
+minimizeBtn.Text            = "R"
 minimizeBtn.AutoButtonColor = true
 minimizeBtn.Active          = true
 minimizeBtn.Visible         = false
 minimizeBtn.Parent          = screenGui
 addCorner(minimizeBtn, Radius.medium)
 addStroke(minimizeBtn, Theme.stroke, 2)
-addOceanGradient(minimizeBtn, Color3.fromRGB(23, 126, 164), Color3.fromRGB(15, 82, 122), 0)
+addOceanGradient(minimizeBtn, Color3.fromRGB(39, 45, 55), Color3.fromRGB(20, 24, 30), 90)
 makeDraggable(minimizeBtn)
 
 minimizeBtn.MouseButton1Click:Connect(function()
@@ -1097,13 +1316,16 @@ dashContent.BackgroundTransparency = 1
 dashContent.Parent            = dashFrame
 
 local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, 0, 0, 30)
-tabBar.BackgroundTransparency = 1
+tabBar.Size = UDim2.new(1, 0, 0, 40)
+tabBar.BackgroundColor3 = Theme.surface
+tabBar.BorderSizePixel = 0
 tabBar.Parent = dashContent
+addCorner(tabBar, Radius.medium)
+addStroke(tabBar, Theme.stroke, 1)
 
 local fishTabBtn = Instance.new("TextButton")
-fishTabBtn.Size = UDim2.new(0.5, -Spacing.xs, 1, 0)
-fishTabBtn.Position = UDim2.new(0, 0, 0, 0)
+fishTabBtn.Size = UDim2.new(0.5, -Spacing.md, 1, -Spacing.sm)
+fishTabBtn.Position = UDim2.new(0, Spacing.xs, 0, Spacing.xs)
 fishTabBtn.BackgroundColor3 = Theme.accent
 fishTabBtn.BorderSizePixel = 0
 fishTabBtn.Font = Enum.Font.GothamBold
@@ -1113,11 +1335,12 @@ fishTabBtn.Text = "Fish Monitor"
 fishTabBtn.AutoButtonColor = true
 fishTabBtn.Parent = tabBar
 addCorner(fishTabBtn, Radius.medium)
+addStroke(fishTabBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, fishTabBtn)
 
 local dcfcTabBtn = Instance.new("TextButton")
-dcfcTabBtn.Size = UDim2.new(0.5, -Spacing.xs, 1, 0)
-dcfcTabBtn.Position = UDim2.new(0.5, Spacing.xs, 0, 0)
+dcfcTabBtn.Size = UDim2.new(0.5, -Spacing.md, 1, -Spacing.sm)
+dcfcTabBtn.Position = UDim2.new(0.5, Spacing.xs, 0, Spacing.xs)
 dcfcTabBtn.BackgroundColor3 = Theme.surface2
 dcfcTabBtn.BorderSizePixel = 0
 dcfcTabBtn.Font = Enum.Font.GothamBold
@@ -1127,25 +1350,27 @@ dcfcTabBtn.Text = "DC/FC"
 dcfcTabBtn.AutoButtonColor = true
 dcfcTabBtn.Parent = tabBar
 addCorner(dcfcTabBtn, Radius.medium)
+addStroke(dcfcTabBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, dcfcTabBtn)
 
 local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(1, 0, 0, 30)
-closeBtn.Position = UDim2.new(0, 0, 1, -30)
-closeBtn.BackgroundColor3 = Theme.bad
+closeBtn.Size = UDim2.new(1, 0, 0, ElementHeight.button)
+closeBtn.Position = UDim2.new(0, 0, 1, -ElementHeight.button)
+closeBtn.BackgroundColor3 = Theme.surface
 closeBtn.BorderSizePixel = 0
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = FontSize.body
 closeBtn.TextColor3 = Theme.text
-closeBtn.Text = "CLOSE PANEL - GOOD BYE"
+closeBtn.Text = "CLOSE PANEL"
 closeBtn.AutoButtonColor = true
 closeBtn.Parent = dashContent
 addCorner(closeBtn, Radius.medium)
+addStroke(closeBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, closeBtn)
 
 local tabPages = Instance.new("Frame")
-tabPages.Size = UDim2.new(1, 0, 1, -(30 + Spacing.sm + 30 + Spacing.sm))
-tabPages.Position = UDim2.new(0, 0, 0, 30 + Spacing.sm)
+tabPages.Size = UDim2.new(1, 0, 1, -(40 + Spacing.md + ElementHeight.button + Spacing.sm))
+tabPages.Position = UDim2.new(0, 0, 0, 40 + Spacing.md)
 tabPages.BackgroundTransparency = 1
 tabPages.Parent = dashContent
 
@@ -1199,24 +1424,32 @@ local function makeSection(parentFrame, titleText, order)
     section.LayoutOrder      = order
     section.Parent           = parentFrame
     addCorner(section, Radius.medium)
-    addOceanGradient(section, Color3.fromRGB(11, 58, 90), Color3.fromRGB(7, 38, 62), 90)
+    addOceanGradient(section, Color3.fromRGB(31, 37, 46), Color3.fromRGB(20, 24, 31), 90)
+    addStroke(section, Theme.stroke, 1)
 
     local label = Instance.new("TextLabel")
     label.Name                  = "SectionLabel"
-    label.Size                  = UDim2.new(1, -Spacing.md*2, 0, 14)
-    label.Position              = UDim2.new(0, Spacing.md, 0, Spacing.sm)
+    label.Size                  = UDim2.new(1, -Spacing.lg*2, 0, 16)
+    label.Position              = UDim2.new(0, Spacing.lg, 0, Spacing.md)
     label.BackgroundTransparency = 1
     label.Font                  = Enum.Font.GothamBold
-    label.TextSize              = FontSize.subtitle
+    label.TextSize              = FontSize.body
     label.TextXAlignment        = Enum.TextXAlignment.Left
     label.TextColor3            = Theme.text
-    label.Text                  = titleText
+    label.Text                  = string.upper(titleText)
     label.Parent                = section
+
+    local divider = Instance.new("Frame")
+    divider.Size = UDim2.new(1, -Spacing.lg*2, 0, 1)
+    divider.Position = UDim2.new(0, Spacing.lg, 0, 34)
+    divider.BackgroundColor3 = Theme.stroke
+    divider.BorderSizePixel = 0
+    divider.Parent = section
 
     local body = Instance.new("Frame")
     body.Name                   = "SectionBody"
-    body.Size                   = UDim2.new(1, -Spacing.md*2, 1, -24)
-    body.Position               = UDim2.new(0, Spacing.md, 0, 18)
+    body.Size                   = UDim2.new(1, -Spacing.lg*2, 1, -46)
+    body.Position               = UDim2.new(0, Spacing.lg, 0, 42)
     body.BackgroundTransparency = 1
     body.Parent                 = section
 
@@ -1224,7 +1457,7 @@ local function makeSection(parentFrame, titleText, order)
 end
 
 local monitorSection, monitorBody = makeSection(fishTabPage, "Monitoring", 1)
-monitorSection.Size = UDim2.new(1, 0, 0, 108)
+monitorSection.Size = UDim2.new(1, 0, 0, 142)
 
 local monitorRow = Instance.new("Frame")
 monitorRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -1232,18 +1465,18 @@ monitorRow.BackgroundTransparency = 1
 monitorRow.Parent                = monitorBody
 
 local monitorLabel = Instance.new("TextLabel")
-monitorLabel.Size                  = UDim2.new(1, -90, 1, 0)
+monitorLabel.Size                  = UDim2.new(1, -96, 1, 0)
 monitorLabel.BackgroundTransparency = 1
 monitorLabel.Font                  = Enum.Font.GothamMedium
 monitorLabel.TextSize              = FontSize.body
 monitorLabel.TextXAlignment        = Enum.TextXAlignment.Left
 monitorLabel.TextColor3            = Theme.textDim
-monitorLabel.Text                  = "Send to Discord"
+monitorLabel.Text                  = "Send catch activity to Discord"
 monitorLabel.Parent                = monitorRow
 
 local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size                  = UDim2.new(0, 64, 0, ElementHeight.input)
-toggleBtn.Position              = UDim2.new(1, -64, 0, 0)
+toggleBtn.Size                  = UDim2.new(0, 84, 0, ElementHeight.input)
+toggleBtn.Position              = UDim2.new(1, -84, 0, 0)
 toggleBtn.BackgroundColor3      = Theme.good
 toggleBtn.BorderSizePixel       = 0
 toggleBtn.Font                  = Enum.Font.GothamBold
@@ -1253,102 +1486,115 @@ toggleBtn.Text                  = "ON"
 toggleBtn.AutoButtonColor       = true
 toggleBtn.Parent                = monitorRow
 addCorner(toggleBtn, Radius.medium)
+addStroke(toggleBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, toggleBtn)
 
--- MODIFIKASI: Baris checkbox pertama
+-- MODIFIKASI: Baris switch pertama
 local rarityRow = Instance.new("Frame")
-rarityRow.Size                  = UDim2.new(1, 0, 0, 24)
-rarityRow.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.xs)
+rarityRow.Size                  = UDim2.new(1, 0, 0, 28)
+rarityRow.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.sm)
 rarityRow.BackgroundTransparency = 1
 rarityRow.Parent                = monitorBody
 
--- MODIFIKASI: Baris checkbox kedua (untuk 2 filter baru)
+-- MODIFIKASI: Baris switch kedua
 local rarityRow2 = Instance.new("Frame")
-rarityRow2.Size                  = UDim2.new(1, 0, 0, 24)
-rarityRow2.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.xs + 22)
+rarityRow2.Size                  = UDim2.new(1, 0, 0, 34)
+rarityRow2.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.sm + 28)
 rarityRow2.BackgroundTransparency = 1
 rarityRow2.Parent                = monitorBody
 
 local function createRarityCheckbox(rarityName, index, color, parentFrame)
     local item = Instance.new("Frame")
-    
-    -- MODIFIKASI: Jika ada lebih dari 3 checkbox, gunakan 2 kolom
-    if parentFrame == rarityRow2 then
-        item.Size = UDim2.new(0.5, -Spacing.xs, 1, 0)
-        item.Position = UDim2.new((index - 1) * 0.5, (index > 1) and Spacing.xs or 0, 0, 0)
-    else
-        item.Size = UDim2.new(1/3, -Spacing.xs, 1, 0)
-        item.Position = UDim2.new((index - 1)/3, (index > 1) and Spacing.xs or 0, 0, 0)
-    end
+    item.Size = UDim2.new(1/3, -Spacing.xs, 1, 0)
+    item.Position = UDim2.new((index - 1)/3, (index > 1) and Spacing.xs or 0, 0, 0)
     
     item.BackgroundTransparency = 1
     item.Parent                = parentFrame
 
-    local box = Instance.new("TextButton")
-    box.Size                  = UDim2.new(0, 20, 0, 20)
-    box.Position              = UDim2.new(0, 0, 0.5, -10)
-    box.BackgroundColor3      = Theme.surface2
-    box.BorderSizePixel       = 0
-    box.Font                  = Enum.Font.GothamBold
-    box.TextSize              = FontSize.body
-    box.TextColor3            = Theme.text
-    box.Text                  = ""
-    box.AutoButtonColor       = true
-    box.Parent                = item
-    addCorner(box, Radius.small)
-
-    local check = Instance.new("Frame")
-    check.Size              = UDim2.new(0, 12, 0, 12)
-    check.Position          = UDim2.new(0.5, -6, 0.5, -6)
-    check.BackgroundColor3  = color
-    check.BorderSizePixel   = 0
-    check.Parent            = box
-    addCorner(check, Spacing.xs)
-
     local label = Instance.new("TextLabel")
-    label.Size                  = UDim2.new(1, -30, 1, 0)
-    label.Position              = UDim2.new(0, 28, 0, 0)
+    label.Size                  = UDim2.new(1, -58, 1, 0)
+    label.Position              = UDim2.new(0, 0, 0, 0)
     label.BackgroundTransparency = 1
     label.Font                  = Enum.Font.GothamMedium
-    label.TextSize              = FontSize.caption  -- MODIFIKASI: Font lebih kecil untuk text panjang
+    label.TextSize              = 9
     label.TextXAlignment        = Enum.TextXAlignment.Left
     label.TextColor3            = Theme.text
     label.Text                  = rarityName
     label.TextScaled            = false
-    label.TextWrapped           = true
+    label.TextWrapped           = false
+    pcall(function()
+        label.TextTruncate = Enum.TextTruncate.AtEnd
+    end)
     label.Parent                = item
 
-    table.insert(interactiveObjects, box)
+    local switch = Instance.new("TextButton")
+    switch.Size                  = UDim2.new(0, 48, 0, 22)
+    switch.Position              = UDim2.new(1, -48, 0.5, -11)
+    switch.BackgroundColor3      = Theme.surface2
+    switch.BorderSizePixel       = 0
+    switch.Text                  = ""
+    switch.AutoButtonColor       = true
+    switch.Parent                = item
+    addCorner(switch, 11)
+    addStroke(switch, Theme.stroke, 1)
+    addOceanGradient(switch, Color3.fromRGB(44, 50, 62), Color3.fromRGB(30, 35, 44), 0)
+
+    local knob = Instance.new("Frame")
+    knob.Size                 = UDim2.new(0, 16, 0, 16)
+    knob.Position             = UDim2.new(0, 3, 0.5, -8)
+    knob.BackgroundColor3     = Color3.fromRGB(230, 234, 238)
+    knob.BorderSizePixel      = 0
+    knob.Parent               = switch
+    addCorner(knob, 8)
+
+    local stateLabel = Instance.new("TextLabel")
+    stateLabel.Size                  = UDim2.new(0, 18, 1, 0)
+    stateLabel.Position              = UDim2.new(0, 15, 0, 0)
+    stateLabel.BackgroundTransparency = 1
+    stateLabel.Font                  = Enum.Font.GothamBold
+    stateLabel.TextSize              = 8
+    stateLabel.TextXAlignment        = Enum.TextXAlignment.Center
+    stateLabel.TextColor3            = Theme.text
+    stateLabel.Parent                = switch
+
+    table.insert(interactiveObjects, switch)
 
     local function sync()
         if rarityFilters[rarityName] then
-            check.Visible    = true
+            switch.BackgroundColor3 = color
+            stateLabel.Text = "ON"
+            stateLabel.Position = UDim2.new(0, 8, 0, 0)
+            knob.Position = UDim2.new(1, -19, 0.5, -8)
             label.TextColor3 = Theme.text
         else
-            check.Visible    = false
+            switch.BackgroundColor3 = Theme.surface2
+            stateLabel.Text = "OFF"
+            stateLabel.Position = UDim2.new(0, 21, 0, 0)
+            knob.Position = UDim2.new(0, 3, 0.5, -8)
             label.TextColor3 = Theme.textDim
         end
     end
     sync()
 
-    box.MouseButton1Click:Connect(function()
+    switch.MouseButton1Click:Connect(function()
         if isBusy then return end
         rarityFilters[rarityName] = not rarityFilters[rarityName]
         sync()
     end)
 end
 
--- MODIFIKASI: Checkbox di baris pertama
+-- MODIFIKASI: Switch di baris pertama
 createRarityCheckbox("Legendary", 1, Color3.fromRGB(255, 200, 80), rarityRow)
 createRarityCheckbox("Mythical",  2, Color3.fromRGB(255, 100, 100), rarityRow)
 createRarityCheckbox("Secret",    3, Color3.fromRGB(100, 255, 190), rarityRow)
 
--- MODIFIKASI: Checkbox di baris kedua (2 filter baru)
+-- MODIFIKASI: Switch di baris kedua
 createRarityCheckbox("Legend (Crystalized)", 1, Color3.fromRGB(255, 100, 100), rarityRow2)
 createRarityCheckbox("Ruby (Gemstone)", 2, Color3.fromRGB(255, 200, 80), rarityRow2)
+createRarityCheckbox("Forgotten (Sea Eater)", 3, Color3.fromRGB(90, 210, 255), rarityRow2)
 
 local webhookSection, webhookBody = makeSection(fishTabPage, "Webhook", 2)
-webhookSection.Size = UDim2.new(1, 0, 0, 76)
+webhookSection.Size = UDim2.new(1, 0, 0, 96)
 
 local webhookLabel = Instance.new("TextLabel")
 webhookLabel.Size                  = UDim2.new(1, 0, 0, 12)
@@ -1373,6 +1619,7 @@ webhookBoxContainer.BorderSizePixel  = 0
 webhookBoxContainer.ClipsDescendants = true
 webhookBoxContainer.Parent           = webhookRow
 addCorner(webhookBoxContainer, Radius.medium)
+addStroke(webhookBoxContainer, Theme.stroke, 1)
 
 local webhookBox = Instance.new("TextBox")
 webhookBox.Size                  = UDim2.new(1, -Spacing.md*2, 1, 0)
@@ -1417,6 +1664,7 @@ testBtn.Text                  = "Test"
 testBtn.AutoButtonColor       = true
 testBtn.Parent                = webhookRow
 addCorner(testBtn, Radius.medium)
+addStroke(testBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, testBtn)
 
 testBtn.MouseButton1Click:Connect(function()
@@ -1458,7 +1706,7 @@ testBtn.MouseButton1Click:Connect(function()
 end)
 
 local populationSection, populationBody = makeSection(dcfcTabPage, "R-LOGS", 1)
-populationSection.Size = UDim2.new(1, 0, 0, 150)
+populationSection.Size = UDim2.new(1, 0, 0, 184)
 
 local populationToggleRow = Instance.new("Frame")
 populationToggleRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -1466,18 +1714,18 @@ populationToggleRow.BackgroundTransparency = 1
 populationToggleRow.Parent                = populationBody
 
 local populationToggleLabel = Instance.new("TextLabel")
-populationToggleLabel.Size                  = UDim2.new(1, -110, 1, 0)
+populationToggleLabel.Size                  = UDim2.new(1, -118, 1, 0)
 populationToggleLabel.BackgroundTransparency = 1
 populationToggleLabel.Font                  = Enum.Font.GothamMedium
 populationToggleLabel.TextSize              = FontSize.body
 populationToggleLabel.TextXAlignment        = Enum.TextXAlignment.Left
 populationToggleLabel.TextColor3            = Theme.textDim
-populationToggleLabel.Text                  = "DC/FC CONNECT"
+populationToggleLabel.Text                  = "DC/FC connection logging"
 populationToggleLabel.Parent                = populationToggleRow
 
 populationToggleButton = Instance.new("TextButton")
-populationToggleButton.Size                  = UDim2.new(0, 100, 0, ElementHeight.input)
-populationToggleButton.Position              = UDim2.new(1, -100, 0, 0)
+populationToggleButton.Size                  = UDim2.new(0, 108, 0, ElementHeight.input)
+populationToggleButton.Position              = UDim2.new(1, -108, 0, 0)
 populationToggleButton.BackgroundColor3      = Theme.bad
 populationToggleButton.BorderSizePixel       = 0
 populationToggleButton.Font                  = Enum.Font.GothamBold
@@ -1487,27 +1735,29 @@ populationToggleButton.Text                  = "UNACTIVE"
 populationToggleButton.AutoButtonColor       = true
 populationToggleButton.Parent                = populationToggleRow
 addCorner(populationToggleButton, Radius.medium)
+addStroke(populationToggleButton, Theme.stroke, 1)
 table.insert(interactiveObjects, populationToggleButton)
 
 local populationWebhookLabel = Instance.new("TextLabel")
 populationWebhookLabel.Size                  = UDim2.new(1, 0, 0, 12)
-populationWebhookLabel.Position              = UDim2.new(0, 0, 0, 36)
+populationWebhookLabel.Position              = UDim2.new(0, 0, 0, 44)
 populationWebhookLabel.BackgroundTransparency = 1
 populationWebhookLabel.Font                  = Enum.Font.GothamMedium
 populationWebhookLabel.TextSize              = FontSize.caption
 populationWebhookLabel.TextXAlignment        = Enum.TextXAlignment.Left
 populationWebhookLabel.TextColor3            = Theme.textDim
-populationWebhookLabel.Text                  = "Populate Webhook URL"
+populationWebhookLabel.Text                  = "DC/FC Webhook URL"
 populationWebhookLabel.Parent                = populationBody
 
 local populationWebhookContainer = Instance.new("Frame")
 populationWebhookContainer.Size             = UDim2.new(1, 0, 0, ElementHeight.input)
-populationWebhookContainer.Position         = UDim2.new(0, 0, 0, 50)
+populationWebhookContainer.Position         = UDim2.new(0, 0, 0, 60)
 populationWebhookContainer.BackgroundColor3 = Theme.surface2
 populationWebhookContainer.BorderSizePixel  = 0
 populationWebhookContainer.ClipsDescendants = true
 populationWebhookContainer.Parent           = populationBody
 addCorner(populationWebhookContainer, Radius.medium)
+addStroke(populationWebhookContainer, Theme.stroke, 1)
 
 local populationWebhookBox = Instance.new("TextBox")
 populationWebhookBox.Size                  = UDim2.new(1, -Spacing.md * 2, 1, 0)
@@ -1527,7 +1777,7 @@ table.insert(interactiveObjects, populationWebhookBox)
 
 populationStatusLabel = Instance.new("TextLabel")
 populationStatusLabel.Size                  = UDim2.new(1, 0, 0, 14)
-populationStatusLabel.Position              = UDim2.new(0, 0, 0, 86)
+populationStatusLabel.Position              = UDim2.new(0, 0, 0, 104)
 populationStatusLabel.BackgroundTransparency = 1
 populationStatusLabel.Font                  = Enum.Font.GothamBold
 populationStatusLabel.TextSize              = FontSize.caption
@@ -1538,7 +1788,7 @@ populationStatusLabel.Parent                = populationBody
 
 populationCycleLabel = Instance.new("TextLabel")
 populationCycleLabel.Size                  = UDim2.new(1, 0, 0, 16)
-populationCycleLabel.Position              = UDim2.new(0, 0, 0, 104)
+populationCycleLabel.Position              = UDim2.new(0, 0, 0, 126)
 populationCycleLabel.BackgroundTransparency = 1
 populationCycleLabel.Font                  = Enum.Font.GothamMedium
 populationCycleLabel.TextSize              = FontSize.caption
@@ -1564,33 +1814,34 @@ refreshPopulationToggleUI()
 setActiveTab("fish")
 
 local footerSection = Instance.new("Frame")
-footerSection.Size                  = UDim2.new(1, 0, 0, 22)
+footerSection.Size                  = UDim2.new(1, 0, 0, 24)
 footerSection.BackgroundTransparency = 1
 footerSection.LayoutOrder           = 3
 footerSection.Parent                = fishTabPage
 
 local footerInfoLabel = Instance.new("TextLabel")
-footerInfoLabel.Size                  = UDim2.new(0.65, 0, 1, 0)
+footerInfoLabel.Size                  = UDim2.new(1, -42, 1, 0)
 footerInfoLabel.BackgroundTransparency = 1
 footerInfoLabel.Font                  = Enum.Font.GothamMedium
 footerInfoLabel.TextSize              = FontSize.caption
 footerInfoLabel.TextXAlignment        = Enum.TextXAlignment.Left
 footerInfoLabel.TextYAlignment        = Enum.TextYAlignment.Center
 footerInfoLabel.TextColor3            = Theme.textDim
-footerInfoLabel.Text                  = "Monitoring: ALL PLAYERS"
+footerInfoLabel.Text                  = "Monitoring scope: all players"
 footerInfoLabel.Parent                = footerSection
 
 local statusPill = Instance.new("TextLabel")
-statusPill.Size                  = UDim2.new(0, 86, 0, 20)
-statusPill.Position              = UDim2.new(1, -86, 0.5, -10)
-statusPill.BackgroundColor3      = Theme.good
+statusPill.Size                  = UDim2.new(0, 28, 0, 28)
+statusPill.Position              = UDim2.new(1, -28, 0.5, -14)
+statusPill.BackgroundColor3      = Theme.surface2
 statusPill.BorderSizePixel       = 0
-statusPill.Font                  = Enum.Font.GothamBold
-statusPill.TextSize              = FontSize.caption
-statusPill.TextColor3            = Theme.text
-statusPill.Text                  = "● LIVE"
+statusPill.Font                  = Enum.Font.GothamBlack
+statusPill.TextSize              = 14
+statusPill.TextColor3            = Theme.good
+statusPill.Text                  = "R"
 statusPill.Parent                = footerSection
 addCorner(statusPill, Radius.medium)
+addStroke(statusPill, Theme.stroke, 1)
 
 closeBtn.MouseButton1Click:Connect(function()
     print("[FISH LOGGER] Script unloaded by user")
@@ -1632,17 +1883,21 @@ toggleBtn.MouseButton1Click:Connect(function()
     if isSending then
         toggleBtn.BackgroundColor3  = Theme.good
         toggleBtn.Text              = "ACTIVE"
-        statusPill.BackgroundColor3 = Theme.good
-        statusPill.Text             = "● RUNNING"
-        minimizeBtn.Text            = "● R-PRIVATE MONITORING : ON"
-        minimizeBtn.BackgroundColor3= Theme.good
+        statusPill.BackgroundColor3 = Theme.surface2
+        statusPill.Text             = "R"
+        statusPill.TextColor3       = Theme.good
+        minimizeBtn.Text            = "R"
+        minimizeBtn.BackgroundColor3= Theme.surface
+        minimizeBtn.TextColor3      = Theme.good
     else
         toggleBtn.BackgroundColor3  = Theme.bad
         toggleBtn.Text              = "DEACTIVE"
-        statusPill.BackgroundColor3 = Theme.bad
-        statusPill.Text             = "● PAUSED"
-        minimizeBtn.Text            = "● R-PRIVATE MONITORING : OFF"
-        minimizeBtn.BackgroundColor3= Theme.bad
+        statusPill.BackgroundColor3 = Theme.surface2
+        statusPill.Text             = "R"
+        statusPill.TextColor3       = Theme.bad
+        minimizeBtn.Text            = "R"
+        minimizeBtn.BackgroundColor3= Theme.surface
+        minimizeBtn.TextColor3      = Theme.bad
     end
 end)
 
@@ -1652,10 +1907,12 @@ local function openDashboard()
         isSending = false
         toggleBtn.BackgroundColor3  = Theme.bad
         toggleBtn.Text              = "DEACTIVE"
-        statusPill.BackgroundColor3 = Theme.bad
-        statusPill.Text             = "● PAUSED"
-        minimizeBtn.BackgroundColor3= Theme.bad
-        minimizeBtn.Text            = "● R-PRIVATE MONITORING : OFF"
+        statusPill.BackgroundColor3 = Theme.surface2
+        statusPill.Text             = "R"
+        statusPill.TextColor3       = Theme.bad
+        minimizeBtn.BackgroundColor3= Theme.surface
+        minimizeBtn.Text            = "R"
+        minimizeBtn.TextColor3      = Theme.bad
         print("[FISH LOGGER] 💡 Auto-disabled sending: Webhook URL is empty")
     end
 
@@ -1725,6 +1982,14 @@ task.spawn(runPopulationLoop)
 _G.StopPopulationMonitor = function()
     populationMonitorRunning = false
     populationDcfcConnected = false
+    if populationAddedConnection then
+        populationAddedConnection:Disconnect()
+        populationAddedConnection = nil
+    end
+    if populationRemovingConnection then
+        populationRemovingConnection:Disconnect()
+        populationRemovingConnection = nil
+    end
     refreshPopulationToggleUI()
     print("[POP-MONITOR] Monitor stopped.")
 end
