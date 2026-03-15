@@ -23,6 +23,147 @@ local Player            = Players.LocalPlayer
 local PlayerGui         = Player:WaitForChild("PlayerGui")
 
 ----------------------------------------------------------------
+-- LOCAL CONFIG
+----------------------------------------------------------------
+
+local ConfigFolderName = "RennMonitor"
+local ConfigFileName = "config.json"
+local SavedConfigData = nil
+
+local function trimText(value)
+    return tostring(value or ""):gsub("^%s*(.-)%s*$", "%1")
+end
+
+local function supportsConfigPersistence()
+    return type(isfile) == "function"
+        and type(readfile) == "function"
+        and type(writefile) == "function"
+        and type(makefolder) == "function"
+end
+
+local function getConfigFilePath()
+    return string.format("%s/%s", ConfigFolderName, ConfigFileName)
+end
+
+local function ensureConfigFolder()
+    if not supportsConfigPersistence() then
+        return false, "Executor file API unavailable"
+    end
+
+    local ok, err = pcall(function()
+        if type(isfolder) == "function" and isfolder(ConfigFolderName) then
+            return
+        end
+        if type(isfolder) ~= "function" and type(listfiles) ~= "function" and isfile(getConfigFilePath()) then
+            return
+        end
+        if type(isfolder) ~= "function" and type(listfiles) == "function" then
+            local success = pcall(function()
+                listfiles(ConfigFolderName)
+            end)
+            if success then
+                return
+            end
+        end
+        if not (type(isfolder) == "function" and isfolder(ConfigFolderName)) then
+            makefolder(ConfigFolderName)
+        end
+    end)
+
+    if not ok then
+        return false, err
+    end
+
+    return true, nil
+end
+
+local function loadSavedConfig()
+    if not supportsConfigPersistence() then
+        return nil, "Executor file API unavailable"
+    end
+
+    local okFolder, folderErr = ensureConfigFolder()
+    if not okFolder then
+        return nil, folderErr
+    end
+
+    local configPath = getConfigFilePath()
+    if not isfile(configPath) then
+        return nil, "Config file not found"
+    end
+
+    local ok, result = pcall(function()
+        local raw = readfile(configPath)
+        if raw == nil or raw == "" then
+            return {}
+        end
+        return HttpService:JSONDecode(raw)
+    end)
+
+    if not ok then
+        return nil, result
+    end
+
+    return result, nil
+end
+
+local function saveConfig(configData)
+    if not supportsConfigPersistence() then
+        return false, "Executor file API unavailable"
+    end
+
+    local okFolder, folderErr = ensureConfigFolder()
+    if not okFolder then
+        return false, folderErr
+    end
+
+    local ok, err = pcall(function()
+        writefile(getConfigFilePath(), HttpService:JSONEncode(configData))
+    end)
+
+    if not ok then
+        return false, err
+    end
+
+    SavedConfigData = configData
+    return true, nil
+end
+
+local function clearSavedConfig()
+    if not supportsConfigPersistence() then
+        return false, "Executor file API unavailable"
+    end
+
+    local configPath = getConfigFilePath()
+    if not isfile(configPath) then
+        SavedConfigData = nil
+        return true, nil
+    end
+
+    if type(delfile) ~= "function" then
+        return false, "Executor delete API unavailable"
+    end
+
+    local ok, err = pcall(function()
+        delfile(configPath)
+    end)
+
+    if not ok then
+        return false, err
+    end
+
+    SavedConfigData = nil
+    return true, nil
+end
+
+do
+    local loadedConfig = loadSavedConfig()
+    if type(loadedConfig) == "table" then
+        SavedConfigData = loadedConfig
+    end
+end
+
+----------------------------------------------------------------
 -- SESSION MANAGEMENT
 ----------------------------------------------------------------
 
@@ -41,8 +182,8 @@ local LastSyncTime = 0
 local CurrentLicenseKey = ""
 local CurrentLicenseOwner = "Unknown"
 local CurrentLicenseExpires = "-"
-local currentWebhookURL = DefaultWebhookURL
-local populationWebhookURL = ""
+local currentWebhookURL = trimText((SavedConfigData and SavedConfigData.fish_webhook_url) or DefaultWebhookURL)
+local populationWebhookURL = trimText((SavedConfigData and SavedConfigData.dcfc_webhook_url) or "")
 local Theme
 local isAuthenticated = false
 local isSending = true
@@ -1810,13 +1951,146 @@ populationToggleButton.MouseButton1Click:Connect(function()
     print(string.format("[POP-MONITOR] DC/FC CONNECT -> %s", populationDcfcConnected and "ACTIVE" or "UNACTIVE"))
 end)
 
+local configSection, configBody = makeSection(fishTabPage, "Config", 3)
+configSection.Size = UDim2.new(1, 0, 0, 88)
+
+local configButtonRow = Instance.new("Frame")
+configButtonRow.Size = UDim2.new(1, 0, 0, ElementHeight.button)
+configButtonRow.BackgroundTransparency = 1
+configButtonRow.Parent = configBody
+
+local saveConfigBtn = Instance.new("TextButton")
+saveConfigBtn.Size = UDim2.new(1/3, -Spacing.sm, 1, 0)
+saveConfigBtn.BackgroundColor3 = Theme.accent
+saveConfigBtn.BorderSizePixel = 0
+saveConfigBtn.Font = Enum.Font.GothamBold
+saveConfigBtn.TextSize = FontSize.body
+saveConfigBtn.TextColor3 = Theme.text
+saveConfigBtn.Text = "SAVE"
+saveConfigBtn.AutoButtonColor = true
+saveConfigBtn.Parent = configButtonRow
+addCorner(saveConfigBtn, Radius.medium)
+addStroke(saveConfigBtn, Theme.stroke, 1)
+table.insert(interactiveObjects, saveConfigBtn)
+
+local autoLoadConfigBtn = Instance.new("TextButton")
+autoLoadConfigBtn.Size = UDim2.new(1/3, -Spacing.sm, 1, 0)
+autoLoadConfigBtn.Position = UDim2.new(1/3, Spacing.xs, 0, 0)
+autoLoadConfigBtn.BackgroundColor3 = Theme.good
+autoLoadConfigBtn.BorderSizePixel = 0
+autoLoadConfigBtn.Font = Enum.Font.GothamBold
+autoLoadConfigBtn.TextSize = FontSize.body
+autoLoadConfigBtn.TextColor3 = Theme.bg
+autoLoadConfigBtn.Text = "AUTO LOAD"
+autoLoadConfigBtn.AutoButtonColor = true
+autoLoadConfigBtn.Parent = configButtonRow
+addCorner(autoLoadConfigBtn, Radius.medium)
+addStroke(autoLoadConfigBtn, Theme.stroke, 1)
+table.insert(interactiveObjects, autoLoadConfigBtn)
+
+local clearConfigBtn = Instance.new("TextButton")
+clearConfigBtn.Size = UDim2.new(1/3, -Spacing.sm, 1, 0)
+clearConfigBtn.Position = UDim2.new(2/3, Spacing.sm, 0, 0)
+clearConfigBtn.BackgroundColor3 = Theme.surface2
+clearConfigBtn.BorderSizePixel = 0
+clearConfigBtn.Font = Enum.Font.GothamBold
+clearConfigBtn.TextSize = FontSize.body
+clearConfigBtn.TextColor3 = Theme.text
+clearConfigBtn.Text = "CLEAR"
+clearConfigBtn.AutoButtonColor = true
+clearConfigBtn.Parent = configButtonRow
+addCorner(clearConfigBtn, Radius.medium)
+addStroke(clearConfigBtn, Theme.stroke, 1)
+table.insert(interactiveObjects, clearConfigBtn)
+
+local configStatusLabel = Instance.new("TextLabel")
+configStatusLabel.Size = UDim2.new(1, 0, 0, 14)
+configStatusLabel.Position = UDim2.new(0, 0, 0, ElementHeight.button + Spacing.sm)
+configStatusLabel.BackgroundTransparency = 1
+configStatusLabel.Font = Enum.Font.GothamMedium
+configStatusLabel.TextSize = FontSize.caption
+configStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+configStatusLabel.TextColor3 = Theme.textDim
+configStatusLabel.Text = SavedConfigData and "Saved config loaded automatically." or "Save fish + DC/FC webhook for next execute."
+configStatusLabel.Parent = configBody
+
+local function setConfigStatus(message, color)
+    configStatusLabel.Text = message
+    configStatusLabel.TextColor3 = color or Theme.textDim
+end
+
+local function applySavedConfigToInputs(savedConfig)
+    if type(savedConfig) ~= "table" then
+        return false
+    end
+
+    currentWebhookURL = trimText(savedConfig.fish_webhook_url)
+    populationWebhookURL = trimText(savedConfig.dcfc_webhook_url)
+    webhookBox.Text = currentWebhookURL
+    populationWebhookBox.Text = populationWebhookURL
+    SavedConfigData = savedConfig
+    return true
+end
+
+saveConfigBtn.MouseButton1Click:Connect(function()
+    if isBusy then return end
+
+    currentWebhookURL = trimText(webhookBox.Text)
+    populationWebhookURL = trimText(populationWebhookBox.Text)
+    webhookBox.Text = currentWebhookURL
+    populationWebhookBox.Text = populationWebhookURL
+
+    local ok, err = saveConfig({
+        fish_webhook_url = currentWebhookURL,
+        dcfc_webhook_url = populationWebhookURL
+    })
+
+    if not ok then
+        setConfigStatus("Save failed: " .. tostring(err), Theme.bad)
+        warn("[FISH LOGGER] Failed to save config:", err)
+        return
+    end
+
+    setConfigStatus("Config saved. It will autoload next execute.", Theme.good)
+    print("[FISH LOGGER] Config saved locally.")
+end)
+
+autoLoadConfigBtn.MouseButton1Click:Connect(function()
+    if isBusy then return end
+
+    local loadedConfig, err = loadSavedConfig()
+    if type(loadedConfig) ~= "table" then
+        setConfigStatus("Auto load failed: " .. tostring(err), Theme.bad)
+        warn("[FISH LOGGER] Failed to auto load config:", err)
+        return
+    end
+
+    applySavedConfigToInputs(loadedConfig)
+    setConfigStatus("Saved config loaded into the form.", Theme.good)
+    print("[FISH LOGGER] Saved config loaded.")
+end)
+
+clearConfigBtn.MouseButton1Click:Connect(function()
+    if isBusy then return end
+
+    local ok, err = clearSavedConfig()
+    if not ok then
+        setConfigStatus("Clear failed: " .. tostring(err), Theme.bad)
+        warn("[FISH LOGGER] Failed to clear config:", err)
+        return
+    end
+
+    setConfigStatus("Saved config cleared from local storage.", Theme.warn)
+    print("[FISH LOGGER] Saved config cleared.")
+end)
+
 refreshPopulationToggleUI()
 setActiveTab("fish")
 
 local footerSection = Instance.new("Frame")
 footerSection.Size                  = UDim2.new(1, 0, 0, 24)
 footerSection.BackgroundTransparency = 1
-footerSection.LayoutOrder           = 3
+footerSection.LayoutOrder           = 4
 footerSection.Parent                = fishTabPage
 
 local footerInfoLabel = Instance.new("TextLabel")
