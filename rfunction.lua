@@ -275,6 +275,7 @@ local RarityColors = {
     ["Secret"]    = 1622168,
     ["Forgotten"] = 5793266,
     ["Forgotten (Sea Eater)"] = 5793266,
+    ["Forgotten (Thunderzilla)"] = 5793266,
     ["Custom"] = 5793266
 }
 
@@ -451,6 +452,22 @@ local function isForgottenSeaEaterMatch(fishName)
     return false
 end
 
+local function isForgottenThunderzillaMatch(fishName)
+    local normalizedRaw = normalizeFishName(fishName)
+    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
+    local target = "thunderzilla"
+    if normalizedRaw == target or normalizedCleaned == target then
+        return true
+    end
+    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
+        return true
+    end
+    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
+        return true
+    end
+    return false
+end
+
 local function extractAssetId(iconString)
     if not iconString or iconString == "" then
         return nil
@@ -603,7 +620,8 @@ local rarityFilters = {
     ["Secret"]    = true,
     ["Legend (Crystalized)"] = true,
     ["Ruby (Gemstone)"] = true,
-    ["Forgotten (Sea Eater)"] = true
+    ["Forgotten (Sea Eater)"] = true,
+    ["Forgotten (Thunderzilla)"] = true
 }
 
 local webhookWarningTime = 0
@@ -1046,6 +1064,29 @@ local function sendToWebhook(catchData)
         return
     end
 
+    local isForgottenThunderzilla = isForgottenThunderzillaMatch(catchData.fish)
+    if isForgottenThunderzilla then
+        if not rarityFilters["Forgotten (Thunderzilla)"] then
+            print("[FISH LOGGER] ⭐️ Skipped: Forgotten (Thunderzilla) - filter disabled")
+            return
+        end
+
+        local forgottenRarity = "Forgotten"
+        local forgottenEmbed = buildCatchEmbed(
+            catchData,
+            forgottenRarity,
+            RarityColors["Forgotten (Thunderzilla)"] or RarityColors[forgottenRarity] or RarityColors["Custom"] or 5793266
+        )
+
+        task.spawn(function()
+            pcall(function()
+                sendToDiscord(currentWebhookURL, forgottenEmbed, botName, botAvatar)
+                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten (Thunderzilla))")
+            end)
+        end)
+        return
+    end
+
     local rarity = RarityByRGB[catchData.rgbString]
     if not rarity then return end
 
@@ -1232,7 +1273,7 @@ end
 
 local authFrame = Instance.new("Frame")
 authFrame.Name                   = "AuthFrame"
-authFrame.Size                   = UDim2.new(0, 380, 0, 170)
+authFrame.Size                   = UDim2.new(0, 360, 0, 160)
 authFrame.Position               = UDim2.new(0.5, 0, 0.5, 0)
 authFrame.AnchorPoint            = Vector2.new(0.5, 0.5)
 authFrame.BackgroundColor3       = Theme.bg
@@ -1337,7 +1378,7 @@ addCorner(loadingBar, 1)
 
 local dashFrame = Instance.new("Frame")
 dashFrame.Name              = "DashboardFrame"
-dashFrame.Size              = UDim2.new(0, 540, 0, 450)
+dashFrame.Size              = UDim2.new(0, 500, 0, 408)
 dashFrame.Position          = UDim2.new(0.5, 0, 0.5, 0)
 dashFrame.AnchorPoint       = Vector2.new(0.5, 0.5)
 dashFrame.BackgroundColor3  = Theme.bg
@@ -1380,7 +1421,7 @@ dashHeaderFix.BorderSizePixel   = 0
 dashHeaderFix.Parent            = dashHeader
 
 local dashTitle = Instance.new("TextLabel")
-dashTitle.Size                  = UDim2.new(1, -156, 0, 22)
+dashTitle.Size                  = UDim2.new(1, -138, 0, 22)
 dashTitle.Position              = UDim2.new(0, Spacing.xl, 0, Spacing.sm)
 dashTitle.BackgroundTransparency = 1
 dashTitle.Font                  = Enum.Font.GothamBold
@@ -1391,7 +1432,7 @@ dashTitle.Text                  = "RENN SERVER MONITOR"
 dashTitle.Parent                = dashHeader
 
 local dashSubtitle = Instance.new("TextLabel")
-dashSubtitle.Size                  = UDim2.new(1, -156, 0, 16)
+dashSubtitle.Size                  = UDim2.new(1, -138, 0, 16)
 dashSubtitle.Position              = UDim2.new(0, Spacing.xl, 0, 30)
 dashSubtitle.BackgroundTransparency = 1
 dashSubtitle.Font                  = Enum.Font.GothamMedium
@@ -1402,14 +1443,14 @@ dashSubtitle.Text                  = "Fish monitoring and separated DC/FC loggin
 dashSubtitle.Parent                = dashHeader
 
 local hideBtn = Instance.new("TextButton")
-hideBtn.Size                  = UDim2.new(0, 88, 0, 30)
-hideBtn.Position              = UDim2.new(1, -88 - Spacing.lg, 0.5, -15)
+hideBtn.Size                  = UDim2.new(0, 72, 0, 28)
+hideBtn.Position              = UDim2.new(1, -72 - Spacing.lg, 0.5, -14)
 hideBtn.BackgroundColor3      = Theme.surface
 hideBtn.BorderSizePixel       = 0
 hideBtn.Font                  = Enum.Font.GothamBold
 hideBtn.TextSize              = FontSize.body
 hideBtn.TextColor3            = Theme.text
-hideBtn.Text                  = "MINIMIZE"
+hideBtn.Text                  = "HIDE"
 hideBtn.AutoButtonColor       = true
 hideBtn.Parent                = dashHeader
 addCorner(hideBtn, Radius.medium)
@@ -1457,7 +1498,7 @@ dashContent.BackgroundTransparency = 1
 dashContent.Parent            = dashFrame
 
 local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, 0, 0, 40)
+tabBar.Size = UDim2.new(1, 0, 0, 36)
 tabBar.BackgroundColor3 = Theme.surface
 tabBar.BorderSizePixel = 0
 tabBar.Parent = dashContent
@@ -1502,7 +1543,7 @@ closeBtn.BorderSizePixel = 0
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = FontSize.body
 closeBtn.TextColor3 = Theme.text
-closeBtn.Text = "CLOSE PANEL"
+closeBtn.Text = "CLOSE"
 closeBtn.AutoButtonColor = true
 closeBtn.Parent = dashContent
 addCorner(closeBtn, Radius.medium)
@@ -1510,19 +1551,39 @@ addStroke(closeBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, closeBtn)
 
 local tabPages = Instance.new("Frame")
-tabPages.Size = UDim2.new(1, 0, 1, -(40 + Spacing.md + ElementHeight.button + Spacing.sm))
-tabPages.Position = UDim2.new(0, 0, 0, 40 + Spacing.md)
+tabPages.Size = UDim2.new(1, 0, 1, -(36 + Spacing.md + ElementHeight.button + Spacing.sm))
+tabPages.Position = UDim2.new(0, 0, 0, 36 + Spacing.md)
 tabPages.BackgroundTransparency = 1
 tabPages.Parent = dashContent
 
-local fishTabPage = Instance.new("Frame")
+local fishTabPage = Instance.new("ScrollingFrame")
 fishTabPage.Size = UDim2.new(1, 0, 1, 0)
 fishTabPage.BackgroundTransparency = 1
+fishTabPage.BorderSizePixel = 0
+fishTabPage.ScrollBarThickness = 4
+fishTabPage.ScrollBarImageColor3 = Theme.accent
+fishTabPage.CanvasSize = UDim2.new(0, 0, 0, 0)
+fishTabPage.AutomaticCanvasSize = Enum.AutomaticSize.None
+fishTabPage.ScrollingDirection = Enum.ScrollingDirection.Y
+fishTabPage.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+fishTabPage.BottomImage = ""
+fishTabPage.TopImage = ""
+fishTabPage.MidImage = ""
 fishTabPage.Parent = tabPages
 
-local dcfcTabPage = Instance.new("Frame")
+local dcfcTabPage = Instance.new("ScrollingFrame")
 dcfcTabPage.Size = UDim2.new(1, 0, 1, 0)
 dcfcTabPage.BackgroundTransparency = 1
+dcfcTabPage.BorderSizePixel = 0
+dcfcTabPage.ScrollBarThickness = 4
+dcfcTabPage.ScrollBarImageColor3 = Theme.accent
+dcfcTabPage.CanvasSize = UDim2.new(0, 0, 0, 0)
+dcfcTabPage.AutomaticCanvasSize = Enum.AutomaticSize.None
+dcfcTabPage.ScrollingDirection = Enum.ScrollingDirection.Y
+dcfcTabPage.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+dcfcTabPage.BottomImage = ""
+dcfcTabPage.TopImage = ""
+dcfcTabPage.MidImage = ""
 dcfcTabPage.Visible = false
 dcfcTabPage.Parent = tabPages
 
@@ -1535,6 +1596,17 @@ local dcfcTabLayout = Instance.new("UIListLayout")
 dcfcTabLayout.Padding = UDim.new(0, Spacing.md)
 dcfcTabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 dcfcTabLayout.Parent = dcfcTabPage
+
+local function bindScrollingCanvas(scroller, layout, extraPadding)
+    local function sync()
+        scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + (extraPadding or Spacing.sm))
+    end
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(sync)
+    sync()
+end
+
+bindScrollingCanvas(fishTabPage, fishTabLayout, Spacing.md)
+bindScrollingCanvas(dcfcTabPage, dcfcTabLayout, Spacing.md)
 
 local function setActiveTab(tabName)
     local isFish = tabName == "fish"
@@ -1598,7 +1670,7 @@ local function makeSection(parentFrame, titleText, order)
 end
 
 local monitorSection, monitorBody = makeSection(fishTabPage, "Monitoring", 1)
-monitorSection.Size = UDim2.new(1, 0, 0, 142)
+monitorSection.Size = UDim2.new(1, 0, 0, 184)
 
 local monitorRow = Instance.new("Frame")
 monitorRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -1643,6 +1715,12 @@ rarityRow2.Size                  = UDim2.new(1, 0, 0, 34)
 rarityRow2.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.sm + 28)
 rarityRow2.BackgroundTransparency = 1
 rarityRow2.Parent                = monitorBody
+
+local rarityRow3 = Instance.new("Frame")
+rarityRow3.Size                  = UDim2.new(1, 0, 0, 34)
+rarityRow3.Position              = UDim2.new(0, 0, 0, (ElementHeight.input * 2) + (Spacing.sm * 2) + 28)
+rarityRow3.BackgroundTransparency = 1
+rarityRow3.Parent                = monitorBody
 
 local function createRarityCheckbox(rarityName, index, color, parentFrame)
     local item = Instance.new("Frame")
@@ -1733,9 +1811,10 @@ createRarityCheckbox("Secret",    3, Color3.fromRGB(100, 255, 190), rarityRow)
 createRarityCheckbox("Legend (Crystalized)", 1, Color3.fromRGB(255, 100, 100), rarityRow2)
 createRarityCheckbox("Ruby (Gemstone)", 2, Color3.fromRGB(255, 200, 80), rarityRow2)
 createRarityCheckbox("Forgotten (Sea Eater)", 3, Color3.fromRGB(90, 210, 255), rarityRow2)
+createRarityCheckbox("Forgotten (Thunderzilla)", 1, Color3.fromRGB(120, 190, 255), rarityRow3)
 
 local webhookSection, webhookBody = makeSection(fishTabPage, "Webhook", 2)
-webhookSection.Size = UDim2.new(1, 0, 0, 96)
+webhookSection.Size = UDim2.new(1, 0, 0, 94)
 
 local webhookLabel = Instance.new("TextLabel")
 webhookLabel.Size                  = UDim2.new(1, 0, 0, 12)
@@ -1815,7 +1894,7 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "FAIRY DUST Sea Eater"
+    local testFishName = "GEMSTONE Thunderzilla"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
@@ -1833,7 +1912,7 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "🧬 MUTATION", value = "`" .. mutation .. "`",         inline = true },
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
-                { name = "🎲 CHANCE",   value = "`1/25M`",                       inline = true },
+                { name = "🎲 CHANCE",   value = "`1/30M`",                       inline = true },
                 { name = "⚖️ WEIGHT",   value = "`1.20M`",                    inline = true }
             },
             footer = {
@@ -1847,7 +1926,7 @@ testBtn.MouseButton1Click:Connect(function()
 end)
 
 local populationSection, populationBody = makeSection(dcfcTabPage, "R-LOGS", 1)
-populationSection.Size = UDim2.new(1, 0, 0, 184)
+populationSection.Size = UDim2.new(1, 0, 0, 188)
 
 local populationToggleRow = Instance.new("Frame")
 populationToggleRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -1952,7 +2031,7 @@ populationToggleButton.MouseButton1Click:Connect(function()
 end)
 
 local configSection, configBody = makeSection(fishTabPage, "Config", 3)
-configSection.Size = UDim2.new(1, 0, 0, 88)
+configSection.Size = UDim2.new(1, 0, 0, 102)
 
 local configButtonRow = Instance.new("Frame")
 configButtonRow.Size = UDim2.new(1, 0, 0, ElementHeight.button)
@@ -2088,7 +2167,7 @@ refreshPopulationToggleUI()
 setActiveTab("fish")
 
 local footerSection = Instance.new("Frame")
-footerSection.Size                  = UDim2.new(1, 0, 0, 24)
+footerSection.Size                  = UDim2.new(1, 0, 0, 20)
 footerSection.BackgroundTransparency = 1
 footerSection.LayoutOrder           = 4
 footerSection.Parent                = fishTabPage
@@ -2193,7 +2272,7 @@ local function openDashboard()
     local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
     local authFade = TweenService:Create(authFrame, tweenInfo, {
-        Size                  = UDim2.new(0, 380, 0, 145),
+        Size                  = UDim2.new(0, 360, 0, 138),
         BackgroundTransparency= 1
     })
 
@@ -2202,7 +2281,7 @@ local function openDashboard()
     dashFrame.BackgroundTransparency = 1
 
     local dashFade = TweenService:Create(dashFrame, tweenInfo, {
-        Size                  = UDim2.new(0, 450, 0, 380),
+        Size                  = UDim2.new(0, 500, 0, 408),
         BackgroundTransparency= 0
     })
 
@@ -2213,7 +2292,7 @@ local function openDashboard()
     authFade.Completed:Connect(function()
         authFrame.Visible               = false
         authFrame.BackgroundTransparency = 0
-        authFrame.Size                  = UDim2.new(0, 380, 0, 170)
+        authFrame.Size                  = UDim2.new(0, 360, 0, 160)
     end)
 end
 
