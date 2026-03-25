@@ -890,7 +890,7 @@ local function sendPopulationDiscordNotification(title, description, color, thum
             thumbnail = thumbnailUrl ~= "" and { url = thumbnailUrl } or nil,
             fields = fields,
             footer = {
-                text = "#ʀᴇɴɴ-ʙ ᴀᴄᴛɪᴠᴇ ᴍᴏɴɪᴛᴏʀɪɴɢ | " .. popNow()
+                text = "#RENNBFROYA - PT PT TERMURAH | " .. popNow()
             }
         }}
     }
@@ -1009,8 +1009,8 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
 
     return {
         embeds = {{
-            title       = "[🔒] RENNB PRIVATE - [ SERVER MONITORING ]",
-            description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
+            title       = "🔒 RENNB PRIVATE - [ SERVER MONITORING ]",
+            description = string.format("**%s** has obtained a **%s**\nCONGRATULATIONS FOR YOU 🎊", catchData.player, catchData.fish),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
@@ -1022,7 +1022,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
                 { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
             },
             footer = {
-                text = string.format("BY RENNARUDHA • %s", catchData.time)
+                text = string.format("BY RENNBFROYA PT PT TERMURAH DISINI • %s", catchData.time)
             }
         }}
     }
@@ -1894,7 +1894,7 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "GEMSTONE Thunderzilla"
+    local testFishName = "GALAXY Thunderzilla"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
@@ -1903,8 +1903,8 @@ testBtn.MouseButton1Click:Connect(function()
 
     local testEmbed = {
         embeds = {{
-            title       = "[🔒] RENNB PRIVATE - [ SERVER CONNECTED ]",
-            description = string.format("[ **%s** ] has obtained a [ **%s** ]\nWEBHOOK CONNECTED [✅]", Player.Name, testFishName),
+            title       = "🔒 RENNB TESTHOOK - [ STATUS SERVER CONNECTED ]",
+            description = string.format("[ **%s** ] has obtained a [ **%s** ]\nSTATUS NOTIFIER CONNECTED !!", Player.Name, testFishName),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
@@ -1913,10 +1913,10 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
                 { name = "🎲 CHANCE",   value = "`1/30M`",                       inline = true },
-                { name = "⚖️ WEIGHT",   value = "`1.20M`",                    inline = true }
+                { name = "⚖️ WEIGHT",   value = "`1.10M`",                    inline = true }
             },
             footer = {
-                text = string.format("By RENNARUDHA • %s", os.date("%d/%m/%Y %H:%M"))
+                text = string.format("BY RENNBFROYA PT PT TERMURAH DISINI • %s", os.date("%d/%m/%Y %H:%M"))
             }
         }}
     }
