@@ -23,147 +23,6 @@ local Player            = Players.LocalPlayer
 local PlayerGui         = Player:WaitForChild("PlayerGui")
 
 ----------------------------------------------------------------
--- LOCAL CONFIG
-----------------------------------------------------------------
-
-local ConfigFolderName = "RennMonitor"
-local ConfigFileName = "config.json"
-local SavedConfigData = nil
-
-local function trimText(value)
-    return tostring(value or ""):gsub("^%s*(.-)%s*$", "%1")
-end
-
-local function supportsConfigPersistence()
-    return type(isfile) == "function"
-        and type(readfile) == "function"
-        and type(writefile) == "function"
-        and type(makefolder) == "function"
-end
-
-local function getConfigFilePath()
-    return string.format("%s/%s", ConfigFolderName, ConfigFileName)
-end
-
-local function ensureConfigFolder()
-    if not supportsConfigPersistence() then
-        return false, "Executor file API unavailable"
-    end
-
-    local ok, err = pcall(function()
-        if type(isfolder) == "function" and isfolder(ConfigFolderName) then
-            return
-        end
-        if type(isfolder) ~= "function" and type(listfiles) ~= "function" and isfile(getConfigFilePath()) then
-            return
-        end
-        if type(isfolder) ~= "function" and type(listfiles) == "function" then
-            local success = pcall(function()
-                listfiles(ConfigFolderName)
-            end)
-            if success then
-                return
-            end
-        end
-        if not (type(isfolder) == "function" and isfolder(ConfigFolderName)) then
-            makefolder(ConfigFolderName)
-        end
-    end)
-
-    if not ok then
-        return false, err
-    end
-
-    return true, nil
-end
-
-local function loadSavedConfig()
-    if not supportsConfigPersistence() then
-        return nil, "Executor file API unavailable"
-    end
-
-    local okFolder, folderErr = ensureConfigFolder()
-    if not okFolder then
-        return nil, folderErr
-    end
-
-    local configPath = getConfigFilePath()
-    if not isfile(configPath) then
-        return nil, "Config file not found"
-    end
-
-    local ok, result = pcall(function()
-        local raw = readfile(configPath)
-        if raw == nil or raw == "" then
-            return {}
-        end
-        return HttpService:JSONDecode(raw)
-    end)
-
-    if not ok then
-        return nil, result
-    end
-
-    return result, nil
-end
-
-local function saveConfig(configData)
-    if not supportsConfigPersistence() then
-        return false, "Executor file API unavailable"
-    end
-
-    local okFolder, folderErr = ensureConfigFolder()
-    if not okFolder then
-        return false, folderErr
-    end
-
-    local ok, err = pcall(function()
-        writefile(getConfigFilePath(), HttpService:JSONEncode(configData))
-    end)
-
-    if not ok then
-        return false, err
-    end
-
-    SavedConfigData = configData
-    return true, nil
-end
-
-local function clearSavedConfig()
-    if not supportsConfigPersistence() then
-        return false, "Executor file API unavailable"
-    end
-
-    local configPath = getConfigFilePath()
-    if not isfile(configPath) then
-        SavedConfigData = nil
-        return true, nil
-    end
-
-    if type(delfile) ~= "function" then
-        return false, "Executor delete API unavailable"
-    end
-
-    local ok, err = pcall(function()
-        delfile(configPath)
-    end)
-
-    if not ok then
-        return false, err
-    end
-
-    SavedConfigData = nil
-    return true, nil
-end
-
-do
-    local loadedConfig = loadSavedConfig()
-    if type(loadedConfig) == "table" then
-        SavedConfigData = loadedConfig
-    end
-end
-
-----------------------------------------------------------------
 -- SESSION MANAGEMENT
 ----------------------------------------------------------------
 
@@ -182,8 +41,8 @@ local LastSyncTime = 0
 local CurrentLicenseKey = ""
 local CurrentLicenseOwner = "Unknown"
 local CurrentLicenseExpires = "-"
-local currentWebhookURL = trimText((SavedConfigData and SavedConfigData.fish_webhook_url) or DefaultWebhookURL)
-local populationWebhookURL = trimText((SavedConfigData and SavedConfigData.dcfc_webhook_url) or "")
+local currentWebhookURL = DefaultWebhookURL
+local populationWebhookURL = ""
 local Theme
 local isAuthenticated = false
 local isSending = true
@@ -196,15 +55,102 @@ local populationStatusLabel
 local populationToggleButton
 local populationAddedConnection
 local populationRemovingConnection
-local textChannelConnections = {}
-local textChannelsChildAddedConnection
-local playerDirectDescendantConnection
-local characterDirectDescendantConnection
-local characterAddedConnection
-local startDirectCatchDetection
 local populationSeenPlayers = {}
 local pendingPopulationJoined = {}
 local pendingPopulationLeft = {}
+
+local CONFIG_FOLDER = "rennb_private"
+local CONFIG_FILE = CONFIG_FOLDER .. "/fish_logger_config.json"
+
+local function getExploitFunc(name)
+    local value = rawget(_G, name)
+    if type(value) == "function" then
+        return value
+    end
+
+    value = rawget(getgenv and getgenv() or {}, name)
+    if type(value) == "function" then
+        return value
+    end
+
+    return rawget(shared or {}, name)
+end
+
+local function ensureConfigFolder()
+    local isFolderFunc = getExploitFunc("isfolder")
+    local makeFolderFunc = getExploitFunc("makefolder")
+
+    if type(makeFolderFunc) ~= "function" then
+        return false
+    end
+
+    if type(isFolderFunc) == "function" then
+        local ok, exists = pcall(isFolderFunc, CONFIG_FOLDER)
+        if ok and exists then
+            return true
+        end
+    end
+
+    pcall(makeFolderFunc, CONFIG_FOLDER)
+    return true
+end
+
+local function loadLocalConfig()
+    local isFileFunc = getExploitFunc("isfile")
+    local readFileFunc = getExploitFunc("readfile")
+    if type(isFileFunc) ~= "function" or type(readFileFunc) ~= "function" then
+        return
+    end
+
+    local okExists, exists = pcall(isFileFunc, CONFIG_FILE)
+    if not okExists or not exists then
+        return
+    end
+
+    local okRead, raw = pcall(readFileFunc, CONFIG_FILE)
+    if not okRead or type(raw) ~= "string" or raw == "" then
+        return
+    end
+
+    local okDecode, data = pcall(HttpService.JSONDecode, HttpService, raw)
+    if not okDecode or type(data) ~= "table" then
+        warn("[FISH LOGGER] Failed to decode local config.")
+        return
+    end
+
+    currentWebhookURL = tostring(data.webhook_url or currentWebhookURL or "")
+    populationWebhookURL = tostring(data.population_webhook_url or populationWebhookURL or "")
+end
+
+local function saveLocalConfig()
+    local writeFileFunc = getExploitFunc("writefile")
+    if type(writeFileFunc) ~= "function" then
+        return false
+    end
+
+    ensureConfigFolder()
+
+    local payload = {
+        webhook_url = currentWebhookURL or "",
+        population_webhook_url = populationWebhookURL or ""
+    }
+
+    local okEncode, encoded = pcall(HttpService.JSONEncode, HttpService, payload)
+    if not okEncode then
+        warn("[FISH LOGGER] Failed to encode local config.")
+        return false
+    end
+
+    local okWrite = pcall(writeFileFunc, CONFIG_FILE, encoded)
+    if not okWrite then
+        warn("[FISH LOGGER] Failed to save local config.")
+        return false
+    end
+
+    return true
+end
+
+loadLocalConfig()
 
 local function refreshSlotInfo()
     return
@@ -260,6 +206,9 @@ Theme = {
     textDim      = Color3.fromRGB(154, 163, 174),
     accent       = Color3.fromRGB(100, 124, 167),
     accentStrong = Color3.fromRGB(80, 100, 138),
+    brandA       = Color3.fromRGB(255, 196, 64),
+    brandB       = Color3.fromRGB(255, 136, 24),
+    brandText    = Color3.fromRGB(34, 24, 8),
     good         = Color3.fromRGB(102, 238, 146),
     warn         = Color3.fromRGB(214, 168, 88),
     bad          = Color3.fromRGB(232, 92, 104)
@@ -280,8 +229,6 @@ local RarityColors = {
     ["Mythical"]  = 16719129,
     ["Secret"]    = 1622168,
     ["Forgotten"] = 5793266,
-    ["Forgotten (Sea Eater)"] = 5793266,
-    ["Forgotten (Thunderzilla)"] = 5793266,
     ["Custom"] = 5793266
 }
 
@@ -442,22 +389,6 @@ local function cleanFishName(fishName)
     return cleaned
 end
 
-local function findFishEntryByName(fishName)
-    if not fishName or fishName == "" then
-        return nil
-    end
-
-    local direct = FishDatabase[fishName]
-    if direct then
-        return direct
-    end
-
-    local cleanedName = cleanFishName(fishName)
-    return FishDatabase[cleanedName]
-        or FishIndexByNormalizedName[normalizeFishName(cleanedName)]
-        or FishIndexByNormalizedName[normalizeFishName(fishName)]
-end
-
 local function isForgottenSeaEaterMatch(fishName)
     local normalizedRaw = normalizeFishName(fishName)
     local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
@@ -490,6 +421,10 @@ local function isForgottenThunderzillaMatch(fishName)
     return false
 end
 
+local function isForgottenFishMatch(fishName)
+    return isForgottenSeaEaterMatch(fishName) or isForgottenThunderzillaMatch(fishName)
+end
+
 local function extractAssetId(iconString)
     if not iconString or iconString == "" then
         return nil
@@ -503,7 +438,9 @@ local DEFAULT_FISH_IMAGE = "https://i.ibb.co/q38LKrcJ/image.png"
 
 local function getThumbnailURL(fishName)
     local cleanedName = cleanFishName(fishName)
-    local fishData    = findFishEntryByName(fishName)
+    local fishData    = FishDatabase[cleanedName]
+        or FishIndexByNormalizedName[normalizeFishName(cleanedName)]
+        or FishIndexByNormalizedName[normalizeFishName(fishName)]
     if not fishData or not fishData.Icon then
         return DEFAULT_FISH_IMAGE
     end
@@ -570,160 +507,6 @@ local function stripRichText(text)
     return text:gsub("<.->", "")
 end
 
-local function detectRarityFromFishData(fishName, fishData)
-    if isForgottenSeaEaterMatch(fishName) or isForgottenThunderzillaMatch(fishName) then
-        return "Forgotten"
-    end
-
-    local tier = tostring(fishData and fishData.Tier or ""):lower()
-    if tier:find("legend", 1, true) then
-        return "Legendary"
-    end
-    if tier:find("myth", 1, true) then
-        return "Mythical"
-    end
-    if tier:find("secret", 1, true) then
-        return "Secret"
-    end
-
-    return nil
-end
-
-local function rarityToRgbString(rarity)
-    for rgbString, rarityName in pairs(RarityByRGB) do
-        if rarityName == rarity then
-            return rgbString
-        end
-    end
-    return ""
-end
-
-local function tryExtractNamedValue(instance, keys)
-    if not instance then
-        return nil
-    end
-
-    local loweredKeys = {}
-    for _, key in ipairs(keys or {}) do
-        loweredKeys[string.lower(key)] = true
-    end
-
-    for attributeName, value in pairs(instance:GetAttributes()) do
-        if loweredKeys[string.lower(attributeName)] and value ~= nil and tostring(value) ~= "" then
-            return tostring(value)
-        end
-    end
-
-    for _, child in ipairs(instance:GetChildren()) do
-        if loweredKeys[string.lower(child.Name or "")] and child:IsA("ValueBase") then
-            local value = child.Value
-            if value ~= nil and tostring(value) ~= "" then
-                return tostring(value)
-            end
-        end
-    end
-
-    return nil
-end
-
-local function extractFishCandidateFromInstance(instance)
-    if not instance then
-        return nil, nil
-    end
-
-    local candidates = {
-        instance.Name,
-        tryExtractNamedValue(instance, {"Fish", "FishName", "Item", "ItemName", "DisplayName", "Name"})
-    }
-
-    if instance:IsA("StringValue") then
-        table.insert(candidates, instance.Value)
-    end
-
-    for _, candidate in ipairs(candidates) do
-        local fishData = findFishEntryByName(candidate)
-        if fishData then
-            return tostring(candidate), fishData
-        end
-    end
-
-    return nil, nil
-end
-
-local function buildCatchDataFromInstance(instance, source)
-    local fishName, fishData = extractFishCandidateFromInstance(instance)
-    if not fishName or not fishData then
-        return nil
-    end
-
-    local rarity = detectRarityFromFishData(fishName, fishData)
-    return {
-        player = Player.Name,
-        fish = fishName,
-        weight = tryExtractNamedValue(instance, {"Weight", "Kg", "Size"}) or "N/A",
-        chance = tryExtractNamedValue(instance, {"Chance", "RarityChance"}) or "N/A",
-        rgbString = rarityToRgbString(rarity),
-        directRarity = rarity,
-        time = os.date("%d/%m/%Y %H:%M"),
-        source = source
-    }
-end
-
-local function normalizeSpaces(text)
-    text = tostring(text or "")
-    text = text:gsub("[%c\r\n\t]", " ")
-    text = text:gsub("%s+", " ")
-    return text:match("^%s*(.-)%s*$") or ""
-end
-
-local function buildMessageCandidateList(messageOrText)
-    local candidates = {}
-    local seen = {}
-
-    local function push(value)
-        value = normalizeSpaces(stripRichText(tostring(value or "")))
-        if value == "" or seen[value] then
-            return
-        end
-        seen[value] = true
-        table.insert(candidates, value)
-    end
-
-    if type(messageOrText) == "table" then
-        push(messageOrText.Text)
-        push(messageOrText.PrefixText)
-        push(messageOrText.Translation)
-        push(messageOrText.Metadata)
-        push(string.format("%s %s", tostring(messageOrText.PrefixText or ""), tostring(messageOrText.Text or "")))
-    else
-        push(messageOrText)
-    end
-
-    return candidates
-end
-
-local function looksLikeServerCatchMessage(cleanText)
-    if cleanText == "" then
-        return false
-    end
-
-    local lowered = cleanText:lower()
-    if lowered:find("%[global alerts%]", 1, true) then
-        return false
-    end
-
-    if lowered:find("obtained", 1, true) and lowered:find("chance", 1, true) then
-        if lowered:find("%[server%]") or lowered:find("server:") then
-            return true
-        end
-        if lowered:find("has obtained", 1, true) or lowered:find(" obtained a ", 1, true) or lowered:find(" obtained an ", 1, true) then
-            return true
-        end
-    end
-
-    return false
-end
-
 local function extractColorFromRichText(text)
     local r, g, b = text:match('color="rgb%((%d+),%s*(%d+),%s*(%d+)%)"')
     if r and g and b then
@@ -740,44 +523,37 @@ local function extractColorFromRichText(text)
 end
 
 local function parseServerMessage(text)
-    local candidates = buildMessageCandidateList(text)
-    local _, rgbStr = extractColorFromRichText(type(text) == "table" and tostring(text.Text or "") or tostring(text or ""))
+    local cleanText = stripRichText(text)
+    if not cleanText:match("^%[Server%]:") then return nil end
 
-    for _, cleanText in ipairs(candidates) do
-        if looksLikeServerCatchMessage(cleanText) then
-            local normalizedText = cleanText
-                :gsub("^%[Server%]:%s*", "")
-                :gsub("^Server:%s*", "")
-                :gsub("^%[SERVER%]:%s*", "")
+    local playerName, fishName, weight, chance =
+        cleanText:match("%[Server%]:%s*(.-)%s+obtained%s+an?%s+(.-)%s+%((.-)%)%s+with%s+a%s+(.-)%s+chance!")
 
-            local playerName, fishName, weight, chance =
-                normalizedText:match("^(.-)%s+obtained%s+an?%s+(.-)%s+%((.-)%)%s+with%s+a%s+(.-)%s+chance[!%.]?$")
+    if playerName and fishName and weight and chance then
+        local _, rgbStr = extractColorFromRichText(text)
+        return {
+            player    = playerName,
+            fish      = fishName,
+            weight    = weight,
+            chance    = chance,
+            rgbString = rgbStr,
+            time      = os.date("%d/%m/%Y %H:%M")
+        }
+    end
 
-            if playerName and fishName and weight and chance then
-                return {
-                    player    = normalizeSpaces(playerName),
-                    fish      = normalizeSpaces(fishName),
-                    weight    = normalizeSpaces(weight),
-                    chance    = normalizeSpaces(chance),
-                    rgbString = rgbStr,
-                    time      = os.date("%d/%m/%Y %H:%M")
-                }
-            end
+    playerName, fishName, chance =
+        cleanText:match("%[Server%]:%s*(.-)%s+obtained%s+an?%s+(.-)%s+with%s+a%s+(.-)%s+chance!")
 
-            playerName, fishName, chance =
-                normalizedText:match("^(.-)%s+obtained%s+an?%s+(.-)%s+with%s+a%s+(.-)%s+chance[!%.]?$")
-
-            if playerName and fishName and chance then
-                return {
-                    player    = normalizeSpaces(playerName),
-                    fish      = normalizeSpaces(fishName),
-                    weight    = "N/A",
-                    chance    = normalizeSpaces(chance),
-                    rgbString = rgbStr,
-                    time      = os.date("%d/%m/%Y %H:%M")
-                }
-            end
-        end
+    if playerName and fishName and chance then
+        local _, rgbStr = extractColorFromRichText(text)
+        return {
+            player    = playerName,
+            fish      = fishName,
+            weight    = "N/A",
+            chance    = chance,
+            rgbString = rgbStr,
+            time      = os.date("%d/%m/%Y %H:%M")
+        }
     end
 
     return nil
@@ -801,8 +577,7 @@ local rarityFilters = {
     ["Secret"]    = true,
     ["Legend (Crystalized)"] = true,
     ["Ruby (Gemstone)"] = true,
-    ["Forgotten (Sea Eater)"] = true,
-    ["Forgotten (Thunderzilla)"] = true
+    ["Forgotten"] = true
 }
 
 local webhookWarningTime = 0
@@ -1071,7 +846,7 @@ local function sendPopulationDiscordNotification(title, description, color, thum
             thumbnail = thumbnailUrl ~= "" and { url = thumbnailUrl } or nil,
             fields = fields,
             footer = {
-                text = "#RENNBFROYA - PT PT TERMURAH | " .. popNow()
+                text = "#ʀᴇɴɴ-ʙ ᴀᴄᴛɪᴠᴇ ᴍᴏɴɪᴛᴏʀɪɴɢ | " .. popNow()
             }
         }}
     }
@@ -1190,8 +965,8 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
 
     return {
         embeds = {{
-            title       = "🔒 RENNB PRIVATE - [ SERVER MONITORING ]",
-            description = string.format("**%s** has obtained a **%s**\nCONGRATULATIONS FOR YOU 🎊", catchData.player, catchData.fish),
+            title       = "🔒 RENNBFROYA PRIVATE - SERVER HOOK",
+            description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
@@ -1203,7 +978,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
                 { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
             },
             footer = {
-                text = string.format("BY RENNBFROYA PT PT TERMURAH DISINI • %s", catchData.time)
+                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", catchData.time)
             }
         }}
     }
@@ -1222,10 +997,10 @@ local function sendToWebhook(catchData)
         return
     end
 
-    local isForgottenSeaEater = isForgottenSeaEaterMatch(catchData.fish)
-    if isForgottenSeaEater then
-        if not rarityFilters["Forgotten (Sea Eater)"] then
-            print("[FISH LOGGER] ⭐️ Skipped: Forgotten (Sea Eater) - filter disabled")
+    local isForgottenFish = isForgottenFishMatch(catchData.fish)
+    if isForgottenFish then
+        if not rarityFilters["Forgotten"] then
+            print("[FISH LOGGER] ⭐️ Skipped: Forgotten - filter disabled")
             return
         end
 
@@ -1233,42 +1008,19 @@ local function sendToWebhook(catchData)
         local forgottenEmbed = buildCatchEmbed(
             catchData,
             forgottenRarity,
-            RarityColors[forgottenRarity] or RarityColors["Forgotten (Sea Eater)"] or RarityColors["Custom"] or 5793266
+            RarityColors[forgottenRarity] or RarityColors["Custom"] or 5793266
         )
 
         task.spawn(function()
             pcall(function()
                 sendToDiscord(currentWebhookURL, forgottenEmbed, botName, botAvatar)
-                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten (Sea Eater))")
+                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten)")
             end)
         end)
         return
     end
 
-    local isForgottenThunderzilla = isForgottenThunderzillaMatch(catchData.fish)
-    if isForgottenThunderzilla then
-        if not rarityFilters["Forgotten (Thunderzilla)"] then
-            print("[FISH LOGGER] ⭐️ Skipped: Forgotten (Thunderzilla) - filter disabled")
-            return
-        end
-
-        local forgottenRarity = "Forgotten"
-        local forgottenEmbed = buildCatchEmbed(
-            catchData,
-            forgottenRarity,
-            RarityColors["Forgotten (Thunderzilla)"] or RarityColors[forgottenRarity] or RarityColors["Custom"] or 5793266
-        )
-
-        task.spawn(function()
-            pcall(function()
-                sendToDiscord(currentWebhookURL, forgottenEmbed, botName, botAvatar)
-                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten (Thunderzilla))")
-            end)
-        end)
-        return
-    end
-
-    local rarity = catchData.directRarity or RarityByRGB[catchData.rgbString]
+    local rarity = RarityByRGB[catchData.rgbString]
     if not rarity then return end
 
     local mutation = detectMutation(catchData.fish)
@@ -1364,6 +1116,12 @@ local function addOceanGradient(obj, colorTop, colorBottom, rotation)
     return gradient
 end
 
+local function applyPanelBadgeStyle(obj, stateColor)
+    obj.BackgroundTransparency = 1
+    obj.BackgroundColor3 = Theme.bg
+    obj.TextColor3 = stateColor
+end
+
 local function makeDraggable(target, handle)
     handle = handle or target
     local dragging = false
@@ -1443,49 +1201,9 @@ local function unloadScript()
         populationRemovingConnection:Disconnect()
         populationRemovingConnection = nil
     end
-    if textChannelsChildAddedConnection then
-        textChannelsChildAddedConnection:Disconnect()
-        textChannelsChildAddedConnection = nil
-    end
-    if playerDirectDescendantConnection then
-        playerDirectDescendantConnection:Disconnect()
-        playerDirectDescendantConnection = nil
-    end
-    if characterDirectDescendantConnection then
-        characterDirectDescendantConnection:Disconnect()
-        characterDirectDescendantConnection = nil
-    end
-    if characterAddedConnection then
-        characterAddedConnection:Disconnect()
-        characterAddedConnection = nil
-    end
-    for _, connection in ipairs(textChannelConnections) do
-        connection:Disconnect()
-    end
-    textChannelConnections = {}
     if screenGui and screenGui.Parent then
         screenGui:Destroy()
     end
-end
-
-local recentCatchDebounce = {}
-
-local function dispatchCatchData(catchData, source)
-    if not isAuthenticated or not catchData then
-        return
-    end
-
-    local fishKey = normalizeFishName(cleanFishName(catchData.fish))
-    local playerKey = normalizeSpaces(catchData.player)
-    local key = string.format("%s|%s", playerKey, fishKey)
-    local now = tick()
-
-    if recentCatchDebounce[key] and (now - recentCatchDebounce[key]) < 2 then
-        return
-    end
-
-    recentCatchDebounce[key] = now
-    sendToWebhook(catchData)
 end
 
 ----------------------------------------------------------------
@@ -1494,7 +1212,7 @@ end
 
 local authFrame = Instance.new("Frame")
 authFrame.Name                   = "AuthFrame"
-authFrame.Size                   = UDim2.new(0, 360, 0, 160)
+authFrame.Size                   = UDim2.new(0, 380, 0, 170)
 authFrame.Position               = UDim2.new(0.5, 0, 0.5, 0)
 authFrame.AnchorPoint            = Vector2.new(0.5, 0.5)
 authFrame.BackgroundColor3       = Theme.bg
@@ -1599,7 +1317,7 @@ addCorner(loadingBar, 1)
 
 local dashFrame = Instance.new("Frame")
 dashFrame.Name              = "DashboardFrame"
-dashFrame.Size              = UDim2.new(0, 500, 0, 408)
+dashFrame.Size              = UDim2.new(0, 540, 0, 450)
 dashFrame.Position          = UDim2.new(0.5, 0, 0.5, 0)
 dashFrame.AnchorPoint       = Vector2.new(0.5, 0.5)
 dashFrame.BackgroundColor3  = Theme.bg
@@ -1642,7 +1360,7 @@ dashHeaderFix.BorderSizePixel   = 0
 dashHeaderFix.Parent            = dashHeader
 
 local dashTitle = Instance.new("TextLabel")
-dashTitle.Size                  = UDim2.new(1, -138, 0, 22)
+dashTitle.Size                  = UDim2.new(1, -156, 0, 22)
 dashTitle.Position              = UDim2.new(0, Spacing.xl, 0, Spacing.sm)
 dashTitle.BackgroundTransparency = 1
 dashTitle.Font                  = Enum.Font.GothamBold
@@ -1653,7 +1371,7 @@ dashTitle.Text                  = "RENN SERVER MONITOR"
 dashTitle.Parent                = dashHeader
 
 local dashSubtitle = Instance.new("TextLabel")
-dashSubtitle.Size                  = UDim2.new(1, -138, 0, 16)
+dashSubtitle.Size                  = UDim2.new(1, -156, 0, 16)
 dashSubtitle.Position              = UDim2.new(0, Spacing.xl, 0, 30)
 dashSubtitle.BackgroundTransparency = 1
 dashSubtitle.Font                  = Enum.Font.GothamMedium
@@ -1664,14 +1382,14 @@ dashSubtitle.Text                  = "Fish monitoring and separated DC/FC loggin
 dashSubtitle.Parent                = dashHeader
 
 local hideBtn = Instance.new("TextButton")
-hideBtn.Size                  = UDim2.new(0, 72, 0, 28)
-hideBtn.Position              = UDim2.new(1, -72 - Spacing.lg, 0.5, -14)
+hideBtn.Size                  = UDim2.new(0, 88, 0, 30)
+hideBtn.Position              = UDim2.new(1, -88 - Spacing.lg, 0.5, -15)
 hideBtn.BackgroundColor3      = Theme.surface
 hideBtn.BorderSizePixel       = 0
 hideBtn.Font                  = Enum.Font.GothamBold
 hideBtn.TextSize              = FontSize.body
 hideBtn.TextColor3            = Theme.text
-hideBtn.Text                  = "HIDE"
+hideBtn.Text                  = "MINIMIZE"
 hideBtn.AutoButtonColor       = true
 hideBtn.Parent                = dashHeader
 addCorner(hideBtn, Radius.medium)
@@ -1680,22 +1398,21 @@ table.insert(interactiveObjects, hideBtn)
 
 local minimizeBtn = Instance.new("TextButton")
 minimizeBtn.Name            = "MinimizeBtn"
-minimizeBtn.Size            = UDim2.new(0, 42, 0, 42)
-minimizeBtn.Position        = UDim2.new(0, Spacing.lg, 0.5, -21)
+minimizeBtn.Size            = UDim2.new(0, 64, 0, 32)
+minimizeBtn.Position        = UDim2.new(0, Spacing.lg, 0.5, -16)
 minimizeBtn.AnchorPoint     = Vector2.new(0, 0.5)
-minimizeBtn.BackgroundColor3= Theme.surface
+minimizeBtn.BackgroundTransparency = 1
+minimizeBtn.BackgroundColor3= Theme.bg
 minimizeBtn.BorderSizePixel = 0
 minimizeBtn.Font            = Enum.Font.GothamBlack
-minimizeBtn.TextSize        = 18
+minimizeBtn.TextSize        = 20
 minimizeBtn.TextColor3      = Theme.good
-minimizeBtn.Text            = "R"
+minimizeBtn.Text            = "⚡ R"
 minimizeBtn.AutoButtonColor = true
 minimizeBtn.Active          = true
 minimizeBtn.Visible         = false
 minimizeBtn.Parent          = screenGui
-addCorner(minimizeBtn, Radius.medium)
-addStroke(minimizeBtn, Theme.stroke, 2)
-addOceanGradient(minimizeBtn, Color3.fromRGB(39, 45, 55), Color3.fromRGB(20, 24, 30), 90)
+applyPanelBadgeStyle(minimizeBtn, Theme.good)
 makeDraggable(minimizeBtn)
 
 minimizeBtn.MouseButton1Click:Connect(function()
@@ -1719,7 +1436,7 @@ dashContent.BackgroundTransparency = 1
 dashContent.Parent            = dashFrame
 
 local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, 0, 0, 36)
+tabBar.Size = UDim2.new(1, 0, 0, 40)
 tabBar.BackgroundColor3 = Theme.surface
 tabBar.BorderSizePixel = 0
 tabBar.Parent = dashContent
@@ -1764,7 +1481,7 @@ closeBtn.BorderSizePixel = 0
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = FontSize.body
 closeBtn.TextColor3 = Theme.text
-closeBtn.Text = "CLOSE"
+closeBtn.Text = "CLOSE PANEL"
 closeBtn.AutoButtonColor = true
 closeBtn.Parent = dashContent
 addCorner(closeBtn, Radius.medium)
@@ -1772,39 +1489,19 @@ addStroke(closeBtn, Theme.stroke, 1)
 table.insert(interactiveObjects, closeBtn)
 
 local tabPages = Instance.new("Frame")
-tabPages.Size = UDim2.new(1, 0, 1, -(36 + Spacing.md + ElementHeight.button + Spacing.sm))
-tabPages.Position = UDim2.new(0, 0, 0, 36 + Spacing.md)
+tabPages.Size = UDim2.new(1, 0, 1, -(40 + Spacing.md + ElementHeight.button + Spacing.sm))
+tabPages.Position = UDim2.new(0, 0, 0, 40 + Spacing.md)
 tabPages.BackgroundTransparency = 1
 tabPages.Parent = dashContent
 
-local fishTabPage = Instance.new("ScrollingFrame")
+local fishTabPage = Instance.new("Frame")
 fishTabPage.Size = UDim2.new(1, 0, 1, 0)
 fishTabPage.BackgroundTransparency = 1
-fishTabPage.BorderSizePixel = 0
-fishTabPage.ScrollBarThickness = 4
-fishTabPage.ScrollBarImageColor3 = Theme.accent
-fishTabPage.CanvasSize = UDim2.new(0, 0, 0, 0)
-fishTabPage.AutomaticCanvasSize = Enum.AutomaticSize.None
-fishTabPage.ScrollingDirection = Enum.ScrollingDirection.Y
-fishTabPage.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
-fishTabPage.BottomImage = ""
-fishTabPage.TopImage = ""
-fishTabPage.MidImage = ""
 fishTabPage.Parent = tabPages
 
-local dcfcTabPage = Instance.new("ScrollingFrame")
+local dcfcTabPage = Instance.new("Frame")
 dcfcTabPage.Size = UDim2.new(1, 0, 1, 0)
 dcfcTabPage.BackgroundTransparency = 1
-dcfcTabPage.BorderSizePixel = 0
-dcfcTabPage.ScrollBarThickness = 4
-dcfcTabPage.ScrollBarImageColor3 = Theme.accent
-dcfcTabPage.CanvasSize = UDim2.new(0, 0, 0, 0)
-dcfcTabPage.AutomaticCanvasSize = Enum.AutomaticSize.None
-dcfcTabPage.ScrollingDirection = Enum.ScrollingDirection.Y
-dcfcTabPage.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
-dcfcTabPage.BottomImage = ""
-dcfcTabPage.TopImage = ""
-dcfcTabPage.MidImage = ""
 dcfcTabPage.Visible = false
 dcfcTabPage.Parent = tabPages
 
@@ -1817,17 +1514,6 @@ local dcfcTabLayout = Instance.new("UIListLayout")
 dcfcTabLayout.Padding = UDim.new(0, Spacing.md)
 dcfcTabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 dcfcTabLayout.Parent = dcfcTabPage
-
-local function bindScrollingCanvas(scroller, layout, extraPadding)
-    local function sync()
-        scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + (extraPadding or Spacing.sm))
-    end
-    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(sync)
-    sync()
-end
-
-bindScrollingCanvas(fishTabPage, fishTabLayout, Spacing.md)
-bindScrollingCanvas(dcfcTabPage, dcfcTabLayout, Spacing.md)
 
 local function setActiveTab(tabName)
     local isFish = tabName == "fish"
@@ -1891,7 +1577,7 @@ local function makeSection(parentFrame, titleText, order)
 end
 
 local monitorSection, monitorBody = makeSection(fishTabPage, "Monitoring", 1)
-monitorSection.Size = UDim2.new(1, 0, 0, 184)
+monitorSection.Size = UDim2.new(1, 0, 0, 142)
 
 local monitorRow = Instance.new("Frame")
 monitorRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -1936,12 +1622,6 @@ rarityRow2.Size                  = UDim2.new(1, 0, 0, 34)
 rarityRow2.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.sm + 28)
 rarityRow2.BackgroundTransparency = 1
 rarityRow2.Parent                = monitorBody
-
-local rarityRow3 = Instance.new("Frame")
-rarityRow3.Size                  = UDim2.new(1, 0, 0, 34)
-rarityRow3.Position              = UDim2.new(0, 0, 0, (ElementHeight.input * 2) + (Spacing.sm * 2) + 28)
-rarityRow3.BackgroundTransparency = 1
-rarityRow3.Parent                = monitorBody
 
 local function createRarityCheckbox(rarityName, index, color, parentFrame)
     local item = Instance.new("Frame")
@@ -2031,11 +1711,10 @@ createRarityCheckbox("Secret",    3, Color3.fromRGB(100, 255, 190), rarityRow)
 -- MODIFIKASI: Switch di baris kedua
 createRarityCheckbox("Legend (Crystalized)", 1, Color3.fromRGB(255, 100, 100), rarityRow2)
 createRarityCheckbox("Ruby (Gemstone)", 2, Color3.fromRGB(255, 200, 80), rarityRow2)
-createRarityCheckbox("Forgotten (Sea Eater)", 3, Color3.fromRGB(90, 210, 255), rarityRow2)
-createRarityCheckbox("Forgotten (Thunderzilla)", 1, Color3.fromRGB(120, 190, 255), rarityRow3)
+createRarityCheckbox("Forgotten", 3, Color3.fromRGB(90, 210, 255), rarityRow2)
 
 local webhookSection, webhookBody = makeSection(fishTabPage, "Webhook", 2)
-webhookSection.Size = UDim2.new(1, 0, 0, 94)
+webhookSection.Size = UDim2.new(1, 0, 0, 96)
 
 local webhookLabel = Instance.new("TextLabel")
 webhookLabel.Size                  = UDim2.new(1, 0, 0, 12)
@@ -2083,7 +1762,9 @@ webhookBox.Parent                = webhookBoxContainer
 table.insert(interactiveObjects, webhookBox)
 
 webhookBox.FocusLost:Connect(function()
-    currentWebhookURL = webhookBox.Text
+    currentWebhookURL = (webhookBox.Text or ""):gsub("^%s*(.-)%s*$", "%1")
+    webhookBox.Text = currentWebhookURL
+    saveLocalConfig()
     if isAuthenticated and currentWebhookURL ~= "" then
         sendLogToServer("sync", {
             license_key = CurrentLicenseKey,
@@ -2115,7 +1796,7 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "GALAXY Thunderzilla"
+    local testFishName = "FAIRY DUST Thunderzilla"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
@@ -2124,8 +1805,8 @@ testBtn.MouseButton1Click:Connect(function()
 
     local testEmbed = {
         embeds = {{
-            title       = "🔒 RENNB TESTHOOK - [ STATUS SERVER CONNECTED ]",
-            description = string.format("[ **%s** ] has obtained a [ **%s** ]\nSTATUS NOTIFIER CONNECTED !!", Player.Name, testFishName),
+            title       = "🔒 RENNB PRIVATE - SERVER TEST CONNECTED",
+            description = string.format("[ **%s** ] has obtained a [ **%s** ]\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
@@ -2133,11 +1814,11 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "🧬 MUTATION", value = "`" .. mutation .. "`",         inline = true },
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
-                { name = "🎲 CHANCE",   value = "`1/30M`",                       inline = true },
-                { name = "⚖️ WEIGHT",   value = "`1.10M`",                    inline = true }
+                { name = "🎲 CHANCE",   value = "`1/10M`",                       inline = true },
+                { name = "⚖️ WEIGHT",   value = "`1.30M`",                    inline = true }
             },
             footer = {
-                text = string.format("BY RENNBFROYA PT PT TERMURAH DISINI • %s", os.date("%d/%m/%Y %H:%M"))
+                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
             }
         }}
     }
@@ -2147,7 +1828,7 @@ testBtn.MouseButton1Click:Connect(function()
 end)
 
 local populationSection, populationBody = makeSection(dcfcTabPage, "R-LOGS", 1)
-populationSection.Size = UDim2.new(1, 0, 0, 188)
+populationSection.Size = UDim2.new(1, 0, 0, 184)
 
 local populationToggleRow = Instance.new("Frame")
 populationToggleRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -2241,6 +1922,7 @@ populationCycleLabel.Parent                = populationBody
 populationWebhookBox.FocusLost:Connect(function()
     populationWebhookURL = (populationWebhookBox.Text or ""):gsub("^%s*(.-)%s*$", "%1")
     populationWebhookBox.Text = populationWebhookURL
+    saveLocalConfig()
     print("[POP-MONITOR] LINK DC updated.")
 end)
 
@@ -2251,146 +1933,13 @@ populationToggleButton.MouseButton1Click:Connect(function()
     print(string.format("[POP-MONITOR] DC/FC CONNECT -> %s", populationDcfcConnected and "ACTIVE" or "UNACTIVE"))
 end)
 
-local configSection, configBody = makeSection(fishTabPage, "Config", 3)
-configSection.Size = UDim2.new(1, 0, 0, 102)
-
-local configButtonRow = Instance.new("Frame")
-configButtonRow.Size = UDim2.new(1, 0, 0, ElementHeight.button)
-configButtonRow.BackgroundTransparency = 1
-configButtonRow.Parent = configBody
-
-local saveConfigBtn = Instance.new("TextButton")
-saveConfigBtn.Size = UDim2.new(1/3, -Spacing.sm, 1, 0)
-saveConfigBtn.BackgroundColor3 = Theme.accent
-saveConfigBtn.BorderSizePixel = 0
-saveConfigBtn.Font = Enum.Font.GothamBold
-saveConfigBtn.TextSize = FontSize.body
-saveConfigBtn.TextColor3 = Theme.text
-saveConfigBtn.Text = "SAVE"
-saveConfigBtn.AutoButtonColor = true
-saveConfigBtn.Parent = configButtonRow
-addCorner(saveConfigBtn, Radius.medium)
-addStroke(saveConfigBtn, Theme.stroke, 1)
-table.insert(interactiveObjects, saveConfigBtn)
-
-local autoLoadConfigBtn = Instance.new("TextButton")
-autoLoadConfigBtn.Size = UDim2.new(1/3, -Spacing.sm, 1, 0)
-autoLoadConfigBtn.Position = UDim2.new(1/3, Spacing.xs, 0, 0)
-autoLoadConfigBtn.BackgroundColor3 = Theme.good
-autoLoadConfigBtn.BorderSizePixel = 0
-autoLoadConfigBtn.Font = Enum.Font.GothamBold
-autoLoadConfigBtn.TextSize = FontSize.body
-autoLoadConfigBtn.TextColor3 = Theme.bg
-autoLoadConfigBtn.Text = "AUTO LOAD"
-autoLoadConfigBtn.AutoButtonColor = true
-autoLoadConfigBtn.Parent = configButtonRow
-addCorner(autoLoadConfigBtn, Radius.medium)
-addStroke(autoLoadConfigBtn, Theme.stroke, 1)
-table.insert(interactiveObjects, autoLoadConfigBtn)
-
-local clearConfigBtn = Instance.new("TextButton")
-clearConfigBtn.Size = UDim2.new(1/3, -Spacing.sm, 1, 0)
-clearConfigBtn.Position = UDim2.new(2/3, Spacing.sm, 0, 0)
-clearConfigBtn.BackgroundColor3 = Theme.surface2
-clearConfigBtn.BorderSizePixel = 0
-clearConfigBtn.Font = Enum.Font.GothamBold
-clearConfigBtn.TextSize = FontSize.body
-clearConfigBtn.TextColor3 = Theme.text
-clearConfigBtn.Text = "CLEAR"
-clearConfigBtn.AutoButtonColor = true
-clearConfigBtn.Parent = configButtonRow
-addCorner(clearConfigBtn, Radius.medium)
-addStroke(clearConfigBtn, Theme.stroke, 1)
-table.insert(interactiveObjects, clearConfigBtn)
-
-local configStatusLabel = Instance.new("TextLabel")
-configStatusLabel.Size = UDim2.new(1, 0, 0, 14)
-configStatusLabel.Position = UDim2.new(0, 0, 0, ElementHeight.button + Spacing.sm)
-configStatusLabel.BackgroundTransparency = 1
-configStatusLabel.Font = Enum.Font.GothamMedium
-configStatusLabel.TextSize = FontSize.caption
-configStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-configStatusLabel.TextColor3 = Theme.textDim
-configStatusLabel.Text = SavedConfigData and "Saved config loaded automatically." or "Save fish + DC/FC webhook for next execute."
-configStatusLabel.Parent = configBody
-
-local function setConfigStatus(message, color)
-    configStatusLabel.Text = message
-    configStatusLabel.TextColor3 = color or Theme.textDim
-end
-
-local function applySavedConfigToInputs(savedConfig)
-    if type(savedConfig) ~= "table" then
-        return false
-    end
-
-    currentWebhookURL = trimText(savedConfig.fish_webhook_url)
-    populationWebhookURL = trimText(savedConfig.dcfc_webhook_url)
-    webhookBox.Text = currentWebhookURL
-    populationWebhookBox.Text = populationWebhookURL
-    SavedConfigData = savedConfig
-    return true
-end
-
-saveConfigBtn.MouseButton1Click:Connect(function()
-    if isBusy then return end
-
-    currentWebhookURL = trimText(webhookBox.Text)
-    populationWebhookURL = trimText(populationWebhookBox.Text)
-    webhookBox.Text = currentWebhookURL
-    populationWebhookBox.Text = populationWebhookURL
-
-    local ok, err = saveConfig({
-        fish_webhook_url = currentWebhookURL,
-        dcfc_webhook_url = populationWebhookURL
-    })
-
-    if not ok then
-        setConfigStatus("Save failed: " .. tostring(err), Theme.bad)
-        warn("[FISH LOGGER] Failed to save config:", err)
-        return
-    end
-
-    setConfigStatus("Config saved. It will autoload next execute.", Theme.good)
-    print("[FISH LOGGER] Config saved locally.")
-end)
-
-autoLoadConfigBtn.MouseButton1Click:Connect(function()
-    if isBusy then return end
-
-    local loadedConfig, err = loadSavedConfig()
-    if type(loadedConfig) ~= "table" then
-        setConfigStatus("Auto load failed: " .. tostring(err), Theme.bad)
-        warn("[FISH LOGGER] Failed to auto load config:", err)
-        return
-    end
-
-    applySavedConfigToInputs(loadedConfig)
-    setConfigStatus("Saved config loaded into the form.", Theme.good)
-    print("[FISH LOGGER] Saved config loaded.")
-end)
-
-clearConfigBtn.MouseButton1Click:Connect(function()
-    if isBusy then return end
-
-    local ok, err = clearSavedConfig()
-    if not ok then
-        setConfigStatus("Clear failed: " .. tostring(err), Theme.bad)
-        warn("[FISH LOGGER] Failed to clear config:", err)
-        return
-    end
-
-    setConfigStatus("Saved config cleared from local storage.", Theme.warn)
-    print("[FISH LOGGER] Saved config cleared.")
-end)
-
 refreshPopulationToggleUI()
 setActiveTab("fish")
 
 local footerSection = Instance.new("Frame")
-footerSection.Size                  = UDim2.new(1, 0, 0, 20)
+footerSection.Size                  = UDim2.new(1, 0, 0, 24)
 footerSection.BackgroundTransparency = 1
-footerSection.LayoutOrder           = 4
+footerSection.LayoutOrder           = 3
 footerSection.Parent                = fishTabPage
 
 local footerInfoLabel = Instance.new("TextLabel")
@@ -2405,17 +1954,17 @@ footerInfoLabel.Text                  = "Monitoring scope: all players"
 footerInfoLabel.Parent                = footerSection
 
 local statusPill = Instance.new("TextLabel")
-statusPill.Size                  = UDim2.new(0, 28, 0, 28)
-statusPill.Position              = UDim2.new(1, -28, 0.5, -14)
-statusPill.BackgroundColor3      = Theme.surface2
+statusPill.Size                  = UDim2.new(0, 44, 0, 28)
+statusPill.Position              = UDim2.new(1, -44, 0.5, -14)
+statusPill.BackgroundTransparency = 1
+statusPill.BackgroundColor3      = Theme.bg
 statusPill.BorderSizePixel       = 0
 statusPill.Font                  = Enum.Font.GothamBlack
-statusPill.TextSize              = 14
+statusPill.TextSize              = 12
 statusPill.TextColor3            = Theme.good
-statusPill.Text                  = "R"
+statusPill.Text                  = "⚡ R"
 statusPill.Parent                = footerSection
-addCorner(statusPill, Radius.medium)
-addStroke(statusPill, Theme.stroke, 1)
+applyPanelBadgeStyle(statusPill, Theme.good)
 
 closeBtn.MouseButton1Click:Connect(function()
     print("[FISH LOGGER] Script unloaded by user")
@@ -2457,21 +2006,17 @@ toggleBtn.MouseButton1Click:Connect(function()
     if isSending then
         toggleBtn.BackgroundColor3  = Theme.good
         toggleBtn.Text              = "ACTIVE"
-        statusPill.BackgroundColor3 = Theme.surface2
-        statusPill.Text             = "R"
-        statusPill.TextColor3       = Theme.good
-        minimizeBtn.Text            = "R"
-        minimizeBtn.BackgroundColor3= Theme.surface
-        minimizeBtn.TextColor3      = Theme.good
+        statusPill.Text             = "⚡ R"
+        applyPanelBadgeStyle(statusPill, Theme.good)
+        minimizeBtn.Text            = "⚡ R"
+        applyPanelBadgeStyle(minimizeBtn, Theme.good)
     else
         toggleBtn.BackgroundColor3  = Theme.bad
         toggleBtn.Text              = "DEACTIVE"
-        statusPill.BackgroundColor3 = Theme.surface2
-        statusPill.Text             = "R"
-        statusPill.TextColor3       = Theme.bad
-        minimizeBtn.Text            = "R"
-        minimizeBtn.BackgroundColor3= Theme.surface
-        minimizeBtn.TextColor3      = Theme.bad
+        statusPill.Text             = "⚡ R"
+        applyPanelBadgeStyle(statusPill, Theme.bad)
+        minimizeBtn.Text            = "⚡ R"
+        applyPanelBadgeStyle(minimizeBtn, Theme.bad)
     end
 end)
 
@@ -2481,19 +2026,17 @@ local function openDashboard()
         isSending = false
         toggleBtn.BackgroundColor3  = Theme.bad
         toggleBtn.Text              = "DEACTIVE"
-        statusPill.BackgroundColor3 = Theme.surface2
-        statusPill.Text             = "R"
-        statusPill.TextColor3       = Theme.bad
-        minimizeBtn.BackgroundColor3= Theme.surface
-        minimizeBtn.Text            = "R"
-        minimizeBtn.TextColor3      = Theme.bad
+        statusPill.Text             = "⚡ R"
+        applyPanelBadgeStyle(statusPill, Theme.bad)
+        minimizeBtn.Text            = "⚡ R"
+        applyPanelBadgeStyle(minimizeBtn, Theme.bad)
         print("[FISH LOGGER] 💡 Auto-disabled sending: Webhook URL is empty")
     end
 
     local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
     local authFade = TweenService:Create(authFrame, tweenInfo, {
-        Size                  = UDim2.new(0, 360, 0, 138),
+        Size                  = UDim2.new(0, 380, 0, 145),
         BackgroundTransparency= 1
     })
 
@@ -2502,7 +2045,7 @@ local function openDashboard()
     dashFrame.BackgroundTransparency = 1
 
     local dashFade = TweenService:Create(dashFrame, tweenInfo, {
-        Size                  = UDim2.new(0, 500, 0, 408),
+        Size                  = UDim2.new(0, 450, 0, 380),
         BackgroundTransparency= 0
     })
 
@@ -2513,7 +2056,7 @@ local function openDashboard()
     authFade.Completed:Connect(function()
         authFrame.Visible               = false
         authFrame.BackgroundTransparency = 0
-        authFrame.Size                  = UDim2.new(0, 360, 0, 160)
+        authFrame.Size                  = UDim2.new(0, 380, 0, 170)
     end)
 end
 
@@ -2538,12 +2081,12 @@ local function startOfflineMonitor()
         CurrentLicenseExpires = (details and details.expires) or "Never"
         currentWebhookURL = webhookBox.Text ~= "" and webhookBox.Text or ((details and details.webhook_url) or "")
         webhookBox.Text = currentWebhookURL
+        saveLocalConfig()
 
         setStatus("Loading Fish Database...", Theme.good, true)
         LastSyncTime = 0
         startSyncLoop()
         buildFishDatabase()
-        startDirectCatchDetection()
 
         task.wait(0.35)
         openDashboard()
@@ -2565,26 +2108,6 @@ _G.StopPopulationMonitor = function()
         populationRemovingConnection:Disconnect()
         populationRemovingConnection = nil
     end
-    if textChannelsChildAddedConnection then
-        textChannelsChildAddedConnection:Disconnect()
-        textChannelsChildAddedConnection = nil
-    end
-    if playerDirectDescendantConnection then
-        playerDirectDescendantConnection:Disconnect()
-        playerDirectDescendantConnection = nil
-    end
-    if characterDirectDescendantConnection then
-        characterDirectDescendantConnection:Disconnect()
-        characterDirectDescendantConnection = nil
-    end
-    if characterAddedConnection then
-        characterAddedConnection:Disconnect()
-        characterAddedConnection = nil
-    end
-    for _, connection in ipairs(textChannelConnections) do
-        connection:Disconnect()
-    end
-    textChannelConnections = {}
     refreshPopulationToggleUI()
     print("[POP-MONITOR] Monitor stopped.")
 end
@@ -2598,94 +2121,23 @@ local debounce = {}
 local function processMessage(text, source)
     if not isAuthenticated then return end
 
-    local parsed = parseServerMessage(text)
-    if not parsed then
-        return
-    end
-
-    local key = tostring(parsed.player or "") .. "|" .. tostring(parsed.fish or "") .. "|" .. tostring(source or "unknown")
+    local key = text .. "_" .. source
     if debounce[key] and (tick() - debounce[key]) < 1 then return end
     debounce[key] = tick()
 
-    dispatchCatchData(parsed, source)
-end
-
-local function attachTextChannelListener(channel)
-    if not channel or not channel:IsA("TextChannel") then
-        return
+    local data = parseServerMessage(text)
+    if data then
+        sendToWebhook(data)
     end
-
-    table.insert(textChannelConnections, channel.MessageReceived:Connect(function(message)
-        processMessage(message, "channel:" .. channel.Name)
-    end))
-end
-
-local function observeDirectCatchInstance(instance, source)
-    local catchData = buildCatchDataFromInstance(instance, source)
-    if not catchData then
-        return
-    end
-
-    dispatchCatchData(catchData, source)
-end
-
-local function attachCharacterDirectListener(character)
-    if characterDirectDescendantConnection then
-        characterDirectDescendantConnection:Disconnect()
-        characterDirectDescendantConnection = nil
-    end
-
-    if not character then
-        return
-    end
-
-    characterDirectDescendantConnection = character.DescendantAdded:Connect(function(instance)
-        observeDirectCatchInstance(instance, "character")
-    end)
-end
-
-startDirectCatchDetection = function()
-    if playerDirectDescendantConnection then
-        playerDirectDescendantConnection:Disconnect()
-        playerDirectDescendantConnection = nil
-    end
-    if characterAddedConnection then
-        characterAddedConnection:Disconnect()
-        characterAddedConnection = nil
-    end
-
-    playerDirectDescendantConnection = Player.DescendantAdded:Connect(function(instance)
-        observeDirectCatchInstance(instance, "player")
-    end)
-
-    characterAddedConnection = Player.CharacterAdded:Connect(function(character)
-        attachCharacterDirectListener(character)
-    end)
-
-    attachCharacterDirectListener(Player.Character)
 end
 
 if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-    local previousIncomingHandler = TextChatService.OnIncomingMessage
-
     TextChatService.OnIncomingMessage = function(msg)
-        local properties = nil
-        if previousIncomingHandler then
-            properties = previousIncomingHandler(msg)
+        local text = msg.Text
+        if text:match("%[Server%]:") and not text:match("%[Global Alerts%]") then
+            processMessage(text, "incoming")
         end
-        processMessage(msg, "incoming")
-        return properties
-    end
-
-    local textChannels = TextChatService:FindFirstChild("TextChannels")
-    if textChannels then
-        for _, channel in ipairs(textChannels:GetChildren()) do
-            attachTextChannelListener(channel)
-        end
-
-        textChannelsChildAddedConnection = textChannels.ChildAdded:Connect(function(child)
-            attachTextChannelListener(child)
-        end)
+        return nil
     end
 end
 
