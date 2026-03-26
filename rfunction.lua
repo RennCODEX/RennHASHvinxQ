@@ -196,6 +196,12 @@ local populationStatusLabel
 local populationToggleButton
 local populationAddedConnection
 local populationRemovingConnection
+local textChannelConnections = {}
+local textChannelsChildAddedConnection
+local playerDirectDescendantConnection
+local characterDirectDescendantConnection
+local characterAddedConnection
+local startDirectCatchDetection
 local populationSeenPlayers = {}
 local pendingPopulationJoined = {}
 local pendingPopulationLeft = {}
@@ -436,6 +442,22 @@ local function cleanFishName(fishName)
     return cleaned
 end
 
+local function findFishEntryByName(fishName)
+    if not fishName or fishName == "" then
+        return nil
+    end
+
+    local direct = FishDatabase[fishName]
+    if direct then
+        return direct
+    end
+
+    local cleanedName = cleanFishName(fishName)
+    return FishDatabase[cleanedName]
+        or FishIndexByNormalizedName[normalizeFishName(cleanedName)]
+        or FishIndexByNormalizedName[normalizeFishName(fishName)]
+end
+
 local function isForgottenSeaEaterMatch(fishName)
     local normalizedRaw = normalizeFishName(fishName)
     local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
@@ -481,9 +503,7 @@ local DEFAULT_FISH_IMAGE = "https://i.ibb.co/q38LKrcJ/image.png"
 
 local function getThumbnailURL(fishName)
     local cleanedName = cleanFishName(fishName)
-    local fishData    = FishDatabase[cleanedName]
-        or FishIndexByNormalizedName[normalizeFishName(cleanedName)]
-        or FishIndexByNormalizedName[normalizeFishName(fishName)]
+    local fishData    = findFishEntryByName(fishName)
     if not fishData or not fishData.Icon then
         return DEFAULT_FISH_IMAGE
     end
@@ -550,6 +570,160 @@ local function stripRichText(text)
     return text:gsub("<.->", "")
 end
 
+local function detectRarityFromFishData(fishName, fishData)
+    if isForgottenSeaEaterMatch(fishName) or isForgottenThunderzillaMatch(fishName) then
+        return "Forgotten"
+    end
+
+    local tier = tostring(fishData and fishData.Tier or ""):lower()
+    if tier:find("legend", 1, true) then
+        return "Legendary"
+    end
+    if tier:find("myth", 1, true) then
+        return "Mythical"
+    end
+    if tier:find("secret", 1, true) then
+        return "Secret"
+    end
+
+    return nil
+end
+
+local function rarityToRgbString(rarity)
+    for rgbString, rarityName in pairs(RarityByRGB) do
+        if rarityName == rarity then
+            return rgbString
+        end
+    end
+    return ""
+end
+
+local function tryExtractNamedValue(instance, keys)
+    if not instance then
+        return nil
+    end
+
+    local loweredKeys = {}
+    for _, key in ipairs(keys or {}) do
+        loweredKeys[string.lower(key)] = true
+    end
+
+    for attributeName, value in pairs(instance:GetAttributes()) do
+        if loweredKeys[string.lower(attributeName)] and value ~= nil and tostring(value) ~= "" then
+            return tostring(value)
+        end
+    end
+
+    for _, child in ipairs(instance:GetChildren()) do
+        if loweredKeys[string.lower(child.Name or "")] and child:IsA("ValueBase") then
+            local value = child.Value
+            if value ~= nil and tostring(value) ~= "" then
+                return tostring(value)
+            end
+        end
+    end
+
+    return nil
+end
+
+local function extractFishCandidateFromInstance(instance)
+    if not instance then
+        return nil, nil
+    end
+
+    local candidates = {
+        instance.Name,
+        tryExtractNamedValue(instance, {"Fish", "FishName", "Item", "ItemName", "DisplayName", "Name"})
+    }
+
+    if instance:IsA("StringValue") then
+        table.insert(candidates, instance.Value)
+    end
+
+    for _, candidate in ipairs(candidates) do
+        local fishData = findFishEntryByName(candidate)
+        if fishData then
+            return tostring(candidate), fishData
+        end
+    end
+
+    return nil, nil
+end
+
+local function buildCatchDataFromInstance(instance, source)
+    local fishName, fishData = extractFishCandidateFromInstance(instance)
+    if not fishName or not fishData then
+        return nil
+    end
+
+    local rarity = detectRarityFromFishData(fishName, fishData)
+    return {
+        player = Player.Name,
+        fish = fishName,
+        weight = tryExtractNamedValue(instance, {"Weight", "Kg", "Size"}) or "N/A",
+        chance = tryExtractNamedValue(instance, {"Chance", "RarityChance"}) or "N/A",
+        rgbString = rarityToRgbString(rarity),
+        directRarity = rarity,
+        time = os.date("%d/%m/%Y %H:%M"),
+        source = source
+    }
+end
+
+local function normalizeSpaces(text)
+    text = tostring(text or "")
+    text = text:gsub("[%c\r\n\t]", " ")
+    text = text:gsub("%s+", " ")
+    return text:match("^%s*(.-)%s*$") or ""
+end
+
+local function buildMessageCandidateList(messageOrText)
+    local candidates = {}
+    local seen = {}
+
+    local function push(value)
+        value = normalizeSpaces(stripRichText(tostring(value or "")))
+        if value == "" or seen[value] then
+            return
+        end
+        seen[value] = true
+        table.insert(candidates, value)
+    end
+
+    if type(messageOrText) == "table" then
+        push(messageOrText.Text)
+        push(messageOrText.PrefixText)
+        push(messageOrText.Translation)
+        push(messageOrText.Metadata)
+        push(string.format("%s %s", tostring(messageOrText.PrefixText or ""), tostring(messageOrText.Text or "")))
+    else
+        push(messageOrText)
+    end
+
+    return candidates
+end
+
+local function looksLikeServerCatchMessage(cleanText)
+    if cleanText == "" then
+        return false
+    end
+
+    local lowered = cleanText:lower()
+    if lowered:find("%[global alerts%]", 1, true) then
+        return false
+    end
+
+    if lowered:find("obtained", 1, true) and lowered:find("chance", 1, true) then
+        if lowered:find("%[server%]") or lowered:find("server:") then
+            return true
+        end
+        if lowered:find("has obtained", 1, true) or lowered:find(" obtained a ", 1, true) or lowered:find(" obtained an ", 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function extractColorFromRichText(text)
     local r, g, b = text:match('color="rgb%((%d+),%s*(%d+),%s*(%d+)%)"')
     if r and g and b then
@@ -566,37 +740,44 @@ local function extractColorFromRichText(text)
 end
 
 local function parseServerMessage(text)
-    local cleanText = stripRichText(text)
-    if not cleanText:match("^%[Server%]:") then return nil end
+    local candidates = buildMessageCandidateList(text)
+    local _, rgbStr = extractColorFromRichText(type(text) == "table" and tostring(text.Text or "") or tostring(text or ""))
 
-    local playerName, fishName, weight, chance =
-        cleanText:match("%[Server%]:%s*(.-)%s+obtained%s+an?%s+(.-)%s+%((.-)%)%s+with%s+a%s+(.-)%s+chance!")
+    for _, cleanText in ipairs(candidates) do
+        if looksLikeServerCatchMessage(cleanText) then
+            local normalizedText = cleanText
+                :gsub("^%[Server%]:%s*", "")
+                :gsub("^Server:%s*", "")
+                :gsub("^%[SERVER%]:%s*", "")
 
-    if playerName and fishName and weight and chance then
-        local _, rgbStr = extractColorFromRichText(text)
-        return {
-            player    = playerName,
-            fish      = fishName,
-            weight    = weight,
-            chance    = chance,
-            rgbString = rgbStr,
-            time      = os.date("%d/%m/%Y %H:%M")
-        }
-    end
+            local playerName, fishName, weight, chance =
+                normalizedText:match("^(.-)%s+obtained%s+an?%s+(.-)%s+%((.-)%)%s+with%s+a%s+(.-)%s+chance[!%.]?$")
 
-    playerName, fishName, chance =
-        cleanText:match("%[Server%]:%s*(.-)%s+obtained%s+an?%s+(.-)%s+with%s+a%s+(.-)%s+chance!")
+            if playerName and fishName and weight and chance then
+                return {
+                    player    = normalizeSpaces(playerName),
+                    fish      = normalizeSpaces(fishName),
+                    weight    = normalizeSpaces(weight),
+                    chance    = normalizeSpaces(chance),
+                    rgbString = rgbStr,
+                    time      = os.date("%d/%m/%Y %H:%M")
+                }
+            end
 
-    if playerName and fishName and chance then
-        local _, rgbStr = extractColorFromRichText(text)
-        return {
-            player    = playerName,
-            fish      = fishName,
-            weight    = "N/A",
-            chance    = chance,
-            rgbString = rgbStr,
-            time      = os.date("%d/%m/%Y %H:%M")
-        }
+            playerName, fishName, chance =
+                normalizedText:match("^(.-)%s+obtained%s+an?%s+(.-)%s+with%s+a%s+(.-)%s+chance[!%.]?$")
+
+            if playerName and fishName and chance then
+                return {
+                    player    = normalizeSpaces(playerName),
+                    fish      = normalizeSpaces(fishName),
+                    weight    = "N/A",
+                    chance    = normalizeSpaces(chance),
+                    rgbString = rgbStr,
+                    time      = os.date("%d/%m/%Y %H:%M")
+                }
+            end
+        end
     end
 
     return nil
@@ -1087,7 +1268,7 @@ local function sendToWebhook(catchData)
         return
     end
 
-    local rarity = RarityByRGB[catchData.rgbString]
+    local rarity = catchData.directRarity or RarityByRGB[catchData.rgbString]
     if not rarity then return end
 
     local mutation = detectMutation(catchData.fish)
@@ -1262,9 +1443,49 @@ local function unloadScript()
         populationRemovingConnection:Disconnect()
         populationRemovingConnection = nil
     end
+    if textChannelsChildAddedConnection then
+        textChannelsChildAddedConnection:Disconnect()
+        textChannelsChildAddedConnection = nil
+    end
+    if playerDirectDescendantConnection then
+        playerDirectDescendantConnection:Disconnect()
+        playerDirectDescendantConnection = nil
+    end
+    if characterDirectDescendantConnection then
+        characterDirectDescendantConnection:Disconnect()
+        characterDirectDescendantConnection = nil
+    end
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+        characterAddedConnection = nil
+    end
+    for _, connection in ipairs(textChannelConnections) do
+        connection:Disconnect()
+    end
+    textChannelConnections = {}
     if screenGui and screenGui.Parent then
         screenGui:Destroy()
     end
+end
+
+local recentCatchDebounce = {}
+
+local function dispatchCatchData(catchData, source)
+    if not isAuthenticated or not catchData then
+        return
+    end
+
+    local fishKey = normalizeFishName(cleanFishName(catchData.fish))
+    local playerKey = normalizeSpaces(catchData.player)
+    local key = string.format("%s|%s", playerKey, fishKey)
+    local now = tick()
+
+    if recentCatchDebounce[key] and (now - recentCatchDebounce[key]) < 2 then
+        return
+    end
+
+    recentCatchDebounce[key] = now
+    sendToWebhook(catchData)
 end
 
 ----------------------------------------------------------------
@@ -2322,6 +2543,7 @@ local function startOfflineMonitor()
         LastSyncTime = 0
         startSyncLoop()
         buildFishDatabase()
+        startDirectCatchDetection()
 
         task.wait(0.35)
         openDashboard()
@@ -2343,6 +2565,26 @@ _G.StopPopulationMonitor = function()
         populationRemovingConnection:Disconnect()
         populationRemovingConnection = nil
     end
+    if textChannelsChildAddedConnection then
+        textChannelsChildAddedConnection:Disconnect()
+        textChannelsChildAddedConnection = nil
+    end
+    if playerDirectDescendantConnection then
+        playerDirectDescendantConnection:Disconnect()
+        playerDirectDescendantConnection = nil
+    end
+    if characterDirectDescendantConnection then
+        characterDirectDescendantConnection:Disconnect()
+        characterDirectDescendantConnection = nil
+    end
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+        characterAddedConnection = nil
+    end
+    for _, connection in ipairs(textChannelConnections) do
+        connection:Disconnect()
+    end
+    textChannelConnections = {}
     refreshPopulationToggleUI()
     print("[POP-MONITOR] Monitor stopped.")
 end
@@ -2356,23 +2598,94 @@ local debounce = {}
 local function processMessage(text, source)
     if not isAuthenticated then return end
 
-    local key = text .. "_" .. source
+    local parsed = parseServerMessage(text)
+    if not parsed then
+        return
+    end
+
+    local key = tostring(parsed.player or "") .. "|" .. tostring(parsed.fish or "") .. "|" .. tostring(source or "unknown")
     if debounce[key] and (tick() - debounce[key]) < 1 then return end
     debounce[key] = tick()
 
-    local data = parseServerMessage(text)
-    if data then
-        sendToWebhook(data)
+    dispatchCatchData(parsed, source)
+end
+
+local function attachTextChannelListener(channel)
+    if not channel or not channel:IsA("TextChannel") then
+        return
     end
+
+    table.insert(textChannelConnections, channel.MessageReceived:Connect(function(message)
+        processMessage(message, "channel:" .. channel.Name)
+    end))
+end
+
+local function observeDirectCatchInstance(instance, source)
+    local catchData = buildCatchDataFromInstance(instance, source)
+    if not catchData then
+        return
+    end
+
+    dispatchCatchData(catchData, source)
+end
+
+local function attachCharacterDirectListener(character)
+    if characterDirectDescendantConnection then
+        characterDirectDescendantConnection:Disconnect()
+        characterDirectDescendantConnection = nil
+    end
+
+    if not character then
+        return
+    end
+
+    characterDirectDescendantConnection = character.DescendantAdded:Connect(function(instance)
+        observeDirectCatchInstance(instance, "character")
+    end)
+end
+
+startDirectCatchDetection = function()
+    if playerDirectDescendantConnection then
+        playerDirectDescendantConnection:Disconnect()
+        playerDirectDescendantConnection = nil
+    end
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+        characterAddedConnection = nil
+    end
+
+    playerDirectDescendantConnection = Player.DescendantAdded:Connect(function(instance)
+        observeDirectCatchInstance(instance, "player")
+    end)
+
+    characterAddedConnection = Player.CharacterAdded:Connect(function(character)
+        attachCharacterDirectListener(character)
+    end)
+
+    attachCharacterDirectListener(Player.Character)
 end
 
 if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+    local previousIncomingHandler = TextChatService.OnIncomingMessage
+
     TextChatService.OnIncomingMessage = function(msg)
-        local text = msg.Text
-        if text:match("%[Server%]:") and not text:match("%[Global Alerts%]") then
-            processMessage(text, "incoming")
+        local properties = nil
+        if previousIncomingHandler then
+            properties = previousIncomingHandler(msg)
         end
-        return nil
+        processMessage(msg, "incoming")
+        return properties
+    end
+
+    local textChannels = TextChatService:FindFirstChild("TextChannels")
+    if textChannels then
+        for _, channel in ipairs(textChannels:GetChildren()) do
+            attachTextChannelListener(channel)
+        end
+
+        textChannelsChildAddedConnection = textChannels.ChildAdded:Connect(function(child)
+            attachTextChannelListener(child)
+        end)
     end
 end
 
