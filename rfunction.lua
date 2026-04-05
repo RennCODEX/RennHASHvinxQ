@@ -235,7 +235,7 @@ local RarityColors = {
 local Mutations = {
     "Galaxy","Corrupt","Gemstone","Ghost","Lightning","Fairy Dust","Gold","Midnight",
     "Radioactive","Stone","Holographic","Albino","Bloodmoon","Sandy","Acidic",
-    "Color Burn","Festive","Frozen","Leviathan Rage","Crystalized","Cupid","Heartbreak"
+    "Color Burn","Festive","Frozen","Leviathan Rage","Crystalized","Cupid","Heartbreak","Carrot","Pastel","Blood Moon","Moon Fragment","Purple Moon","Cupid"
 }
 
 ----------------------------------------------------------------
@@ -1796,11 +1796,11 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "FAIRY DUST Thunderzilla"
+    local testFishName = "CARROT Strawberry Orca"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
-    local rarity = "Forgotten"
+    local rarity = "Secret"
     local embedColor = RarityColors[rarity] or 16766763
 
     local testEmbed = {
@@ -1814,8 +1814,8 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "🧬 MUTATION", value = "`" .. mutation .. "`",         inline = true },
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
-                { name = "🎲 CHANCE",   value = "`1/10M`",                       inline = true },
-                { name = "⚖️ WEIGHT",   value = "`1.30M`",                    inline = true }
+                { name = "🎲 CHANCE",   value = "`1/3M`",                       inline = true },
+                { name = "⚖️ WEIGHT",   value = "`310K kg`",                    inline = true }
             },
             footer = {
                 text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
