@@ -221,7 +221,8 @@ Theme = {
 local RarityByRGB = {
     ["rgb(255, 185, 43)"] = "Legendary",
     ["rgb(255, 25, 25)"]  = "Mythical",
-    ["rgb(24, 255, 152)"] = "Secret"
+    ["rgb(24, 255, 152)"] = "Secret",
+    ["rgb(0, 0, 0)"]      = "Forgotten"
 }
 
 local RarityColors = {
@@ -387,42 +388,6 @@ local function cleanFishName(fishName)
     cleaned = cleaned:match("^%s*(.-)%s*$")
 
     return cleaned
-end
-
-local function isForgottenSeaEaterMatch(fishName)
-    local normalizedRaw = normalizeFishName(fishName)
-    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
-    local target = "sea eater"
-    if normalizedRaw == target or normalizedCleaned == target then
-        return true
-    end
-    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
-        return true
-    end
-    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
-        return true
-    end
-    return false
-end
-
-local function isForgottenThunderzillaMatch(fishName)
-    local normalizedRaw = normalizeFishName(fishName)
-    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
-    local target = "thunderzilla"
-    if normalizedRaw == target or normalizedCleaned == target then
-        return true
-    end
-    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
-        return true
-    end
-    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
-        return true
-    end
-    return false
-end
-
-local function isForgottenFishMatch(fishName)
-    return isForgottenSeaEaterMatch(fishName) or isForgottenThunderzillaMatch(fishName)
 end
 
 local function extractAssetId(iconString)
@@ -965,7 +930,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
 
     return {
         embeds = {{
-            title       = "🔒 RENNBFROYA PRIVATE - SERVER HOOK",
+            title       = "🔒 RENNBLLOYD PRIVATE - WEBHOOK SERVER CAUGHT FISH",
             description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
@@ -978,7 +943,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
                 { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
             },
             footer = {
-                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", catchData.time)
+                text = string.format("RENNBLLOYD PT PT TERMURAH • %s", catchData.time)
             }
         }}
     }
@@ -994,29 +959,6 @@ local function sendToWebhook(catchData)
             warn("[FISH LOGGER] ⚠️ Webhook URL is empty! Please set it in the dashboard.")
             webhookWarningTime = currentTime
         end
-        return
-    end
-
-    local isForgottenFish = isForgottenFishMatch(catchData.fish)
-    if isForgottenFish then
-        if not rarityFilters["Forgotten"] then
-            print("[FISH LOGGER] ⭐️ Skipped: Forgotten - filter disabled")
-            return
-        end
-
-        local forgottenRarity = "Forgotten"
-        local forgottenEmbed = buildCatchEmbed(
-            catchData,
-            forgottenRarity,
-            RarityColors[forgottenRarity] or RarityColors["Custom"] or 5793266
-        )
-
-        task.spawn(function()
-            pcall(function()
-                sendToDiscord(currentWebhookURL, forgottenEmbed, botName, botAvatar)
-                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten)")
-            end)
-        end)
         return
     end
 
@@ -1796,16 +1738,16 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "CARROT Strawberry Orca"
+    local testFishName = "PASTEL Iridesca"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
-    local rarity = "Secret"
+    local rarity = "Forgotten"
     local embedColor = RarityColors[rarity] or 16766763
 
     local testEmbed = {
         embeds = {{
-            title       = "🔒 RENNB PRIVATE - SERVER TEST CONNECTED",
+            title       = "🔒 RENNBLLOYD PRIVATE - WEBHOOK ALL SERVER BERHASIL TERHUBUNG",
             description = string.format("[ **%s** ] has obtained a [ **%s** ]\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
@@ -1814,11 +1756,11 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "🧬 MUTATION", value = "`" .. mutation .. "`",         inline = true },
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
-                { name = "🎲 CHANCE",   value = "`1/3M`",                       inline = true },
-                { name = "⚖️ WEIGHT",   value = "`310K kg`",                    inline = true }
+                { name = "🎲 CHANCE",   value = "`1/25M`",                       inline = true },
+                { name = "⚖️ WEIGHT",   value = "`1.10M kg`",                    inline = true }
             },
             footer = {
-                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
+                text = string.format("RENNBLLOYD PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
             }
         }}
     }
