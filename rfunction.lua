@@ -221,8 +221,7 @@ Theme = {
 local RarityByRGB = {
     ["rgb(255, 185, 43)"] = "Legendary",
     ["rgb(255, 25, 25)"]  = "Mythical",
-    ["rgb(24, 255, 152)"] = "Secret",
-    ["rgb(0, 0, 0)"]      = "Forgotten"
+    ["rgb(24, 255, 152)"] = "Secret"
 }
 
 local RarityColors = {
@@ -245,6 +244,8 @@ local Mutations = {
 
 local FishDatabase = {}
 local FishIndexByNormalizedName = {}
+local ItemVisualDatabase = {}
+local ItemVisualIndexByNormalizedName = {}
 local MODULE_REQUIRE_TIMEOUT = 0.35
 local MODULE_DECOMPILE_TIMEOUT = 0.75
 
@@ -323,6 +324,48 @@ local function parseFishFromModuleSource(sourceText, moduleName)
     }
 end
 
+local function parseItemVisualFromModuleSource(sourceText, moduleName)
+    if type(sourceText) ~= "string" or sourceText == "" then
+        return nil
+    end
+
+    local name = sourceText:match('Name%s*=%s*"([^"]+)"') or sourceText:match("Name%s*=%s*'([^']+)'") or moduleName
+    local icon = sourceText:match('Icon%s*=%s*"([^"]+)"') or sourceText:match("Icon%s*=%s*'([^']+)'") or ""
+    local idStr = sourceText:match("Id%s*=%s*(%d+)")
+    local itemType = sourceText:match('Type%s*=%s*"([^"]+)"') or sourceText:match("Type%s*=%s*'([^']+)'") or "Unknown"
+
+    if name == "" and icon == "" then
+        return nil
+    end
+
+    return {
+        Name = name,
+        Icon = icon,
+        Id = idStr and tonumber(idStr) or 0,
+        Type = itemType
+    }
+end
+
+local function addItemVisualEntry(entry)
+    if not entry or not entry.Name or entry.Name == "" then
+        return false
+    end
+
+    ItemVisualDatabase[entry.Name] = entry
+    ItemVisualIndexByNormalizedName[normalizeFishName(entry.Name)] = entry
+    return true
+end
+
+local function isEnchantStoneMatch(itemName)
+    local normalized = normalizeFishName(itemName)
+    return normalized == "eggy enchant stone"
+        or normalized:find("enchant stone", 1, true) ~= nil
+end
+
+local function isEggyEnchantStoneMatch(itemName)
+    return normalizeFishName(itemName) == "eggy enchant stone"
+end
+
 local function buildFishDatabase()
     local success, ItemsFolder = pcall(function()
         return ReplicatedStorage:WaitForChild("Items", 5)
@@ -335,39 +378,56 @@ local function buildFishDatabase()
 
     FishDatabase = {}
     FishIndexByNormalizedName = {}
+    ItemVisualDatabase = {}
+    ItemVisualIndexByNormalizedName = {}
 
-    local count = 0
+    local fishCount = 0
+    local itemVisualCount = 0
     for _, item in ipairs(ItemsFolder:GetDescendants()) do
         if item:IsA("ModuleScript") then
             local ok, data = runWithTimeout(MODULE_REQUIRE_TIMEOUT, function()
                 return require(item)
             end)
             if ok and data and data.Data then
-                local fishData = data.Data
-                if fishData.Type == "Fish" and fishData.Name then
+                local itemData = data.Data
+                if itemData.Name then
+                    itemVisualCount += addItemVisualEntry({
+                        Name = itemData.Name,
+                        Icon = itemData.Icon or "",
+                        Id = itemData.Id or 0,
+                        Type = itemData.Type or "Unknown"
+                    }) and 1 or 0
+                end
+
+                if itemData.Type == "Fish" and itemData.Name then
                     local entry = {
-                        Name      = fishData.Name,
-                        Icon      = fishData.Icon or "",
-                        Tier      = fishData.Tier or "Unknown",
+                        Name      = itemData.Name,
+                        Icon      = itemData.Icon or "",
+                        Tier      = itemData.Tier or "Unknown",
                         SellPrice = data.SellPrice or 0,
-                        Id        = fishData.Id or 0
+                        Id        = itemData.Id or 0
                     }
-                    FishDatabase[fishData.Name] = entry
-                    FishIndexByNormalizedName[normalizeFishName(fishData.Name)] = entry
-                    count += 1
+                    FishDatabase[itemData.Name] = entry
+                    FishIndexByNormalizedName[normalizeFishName(itemData.Name)] = entry
+                    fishCount += 1
                 end
             else
-                local fallback = parseFishFromModuleSource(getModuleSourceText(item), item.Name)
+                local sourceText = getModuleSourceText(item)
+                local fallbackVisual = parseItemVisualFromModuleSource(sourceText, item.Name)
+                itemVisualCount += addItemVisualEntry(fallbackVisual) and 1 or 0
+
+                local fallback = parseFishFromModuleSource(sourceText, item.Name)
                 if fallback and fallback.Name then
                     FishDatabase[fallback.Name] = fallback
                     FishIndexByNormalizedName[normalizeFishName(fallback.Name)] = fallback
-                    count += 1
+                    fishCount += 1
                 end
             end
         end
     end
 
-    print("[FISH LOGGER] Loaded", count, "fish into database")
+    print("[FISH LOGGER] Loaded", fishCount, "fish into database")
+    print("[FISH LOGGER] Loaded", itemVisualCount, "item visuals into database")
 end
 local function cleanFishName(fishName)
     local cleaned = fishName
@@ -390,6 +450,42 @@ local function cleanFishName(fishName)
     return cleaned
 end
 
+local function isForgottenSeaEaterMatch(fishName)
+    local normalizedRaw = normalizeFishName(fishName)
+    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
+    local target = "sea eater"
+    if normalizedRaw == target or normalizedCleaned == target then
+        return true
+    end
+    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
+        return true
+    end
+    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
+        return true
+    end
+    return false
+end
+
+local function isForgottenThunderzillaMatch(fishName)
+    local normalizedRaw = normalizeFishName(fishName)
+    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
+    local target = "thunderzilla"
+    if normalizedRaw == target or normalizedCleaned == target then
+        return true
+    end
+    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
+        return true
+    end
+    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
+        return true
+    end
+    return false
+end
+
+local function isForgottenFishMatch(fishName)
+    return isForgottenSeaEaterMatch(fishName) or isForgottenThunderzillaMatch(fishName)
+end
+
 local function extractAssetId(iconString)
     if not iconString or iconString == "" then
         return nil
@@ -406,11 +502,16 @@ local function getThumbnailURL(fishName)
     local fishData    = FishDatabase[cleanedName]
         or FishIndexByNormalizedName[normalizeFishName(cleanedName)]
         or FishIndexByNormalizedName[normalizeFishName(fishName)]
-    if not fishData or not fishData.Icon then
+    local itemData = fishData
+        or ItemVisualDatabase[cleanedName]
+        or ItemVisualIndexByNormalizedName[normalizeFishName(cleanedName)]
+        or ItemVisualIndexByNormalizedName[normalizeFishName(fishName)]
+
+    if not itemData or not itemData.Icon then
         return DEFAULT_FISH_IMAGE
     end
 
-    local assetId = extractAssetId(fishData.Icon)
+    local assetId = extractAssetId(itemData.Icon)
     if not assetId then
         return DEFAULT_FISH_IMAGE
     end
@@ -542,6 +643,7 @@ local rarityFilters = {
     ["Secret"]    = true,
     ["Legend (Crystalized)"] = true,
     ["Ruby (Gemstone)"] = true,
+    ["Eggy Enchant Stone"] = true,
     ["Forgotten"] = true
 }
 
@@ -930,7 +1032,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
 
     return {
         embeds = {{
-            title       = "🔒 RENNBLLOYD PRIVATE - WEBHOOK SERVER CAUGHT FISH",
+            title       = "🔒 RENNBFROYA PRIVATE - SERVER HOOK",
             description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
@@ -943,7 +1045,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor)
                 { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
             },
             footer = {
-                text = string.format("RENNBLLOYD PT PT TERMURAH • %s", catchData.time)
+                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", catchData.time)
             }
         }}
     }
@@ -959,6 +1061,29 @@ local function sendToWebhook(catchData)
             warn("[FISH LOGGER] ⚠️ Webhook URL is empty! Please set it in the dashboard.")
             webhookWarningTime = currentTime
         end
+        return
+    end
+
+    local isForgottenFish = isForgottenFishMatch(catchData.fish)
+    if isForgottenFish then
+        if not rarityFilters["Forgotten"] then
+            print("[FISH LOGGER] ⭐️ Skipped: Forgotten - filter disabled")
+            return
+        end
+
+        local forgottenRarity = "Forgotten"
+        local forgottenEmbed = buildCatchEmbed(
+            catchData,
+            forgottenRarity,
+            RarityColors[forgottenRarity] or RarityColors["Custom"] or 5793266
+        )
+
+        task.spawn(function()
+            pcall(function()
+                sendToDiscord(currentWebhookURL, forgottenEmbed, botName, botAvatar)
+                print("[FISH LOGGER] ✅ Sent:", catchData.player, "→", catchData.fish, "(Filter: Forgotten)")
+            end)
+        end)
         return
     end
 
@@ -979,6 +1104,15 @@ local function sendToWebhook(catchData)
             filterToUse = "Legendary"
         elseif rarityFilters["Ruby (Gemstone)"] then
             filterToUse = "Ruby (Gemstone)"
+        end
+    -- Cek apakah Eggy Enchant Stone
+    elseif rarity == "Mythical" and isEggyEnchantStoneMatch(catchData.fish) then
+        if rarityFilters["Eggy Enchant Stone"] and not rarityFilters["Mythical"] then
+            filterToUse = "Eggy Enchant Stone"
+        elseif rarityFilters["Mythical"] then
+            filterToUse = "Mythical"
+        elseif rarityFilters["Eggy Enchant Stone"] then
+            filterToUse = "Eggy Enchant Stone"
         end
     -- Cek apakah Legend (Crystalized)
     elseif rarity == "Legendary" and mutation == "Crystalized" then
@@ -1519,7 +1653,7 @@ local function makeSection(parentFrame, titleText, order)
 end
 
 local monitorSection, monitorBody = makeSection(fishTabPage, "Monitoring", 1)
-monitorSection.Size = UDim2.new(1, 0, 0, 142)
+monitorSection.Size = UDim2.new(1, 0, 0, 176)
 
 local monitorRow = Instance.new("Frame")
 monitorRow.Size                  = UDim2.new(1, 0, 0, ElementHeight.input)
@@ -1564,6 +1698,12 @@ rarityRow2.Size                  = UDim2.new(1, 0, 0, 34)
 rarityRow2.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.sm + 28)
 rarityRow2.BackgroundTransparency = 1
 rarityRow2.Parent                = monitorBody
+
+local rarityRow3 = Instance.new("Frame")
+rarityRow3.Size                  = UDim2.new(1, 0, 0, 34)
+rarityRow3.Position              = UDim2.new(0, 0, 0, ElementHeight.input + Spacing.sm + 62)
+rarityRow3.BackgroundTransparency = 1
+rarityRow3.Parent                = monitorBody
 
 local function createRarityCheckbox(rarityName, index, color, parentFrame)
     local item = Instance.new("Frame")
@@ -1654,6 +1794,7 @@ createRarityCheckbox("Secret",    3, Color3.fromRGB(100, 255, 190), rarityRow)
 createRarityCheckbox("Legend (Crystalized)", 1, Color3.fromRGB(255, 100, 100), rarityRow2)
 createRarityCheckbox("Ruby (Gemstone)", 2, Color3.fromRGB(255, 200, 80), rarityRow2)
 createRarityCheckbox("Forgotten", 3, Color3.fromRGB(90, 210, 255), rarityRow2)
+createRarityCheckbox("Eggy Enchant Stone", 1, Color3.fromRGB(255, 100, 100), rarityRow3)
 
 local webhookSection, webhookBody = makeSection(fishTabPage, "Webhook", 2)
 webhookSection.Size = UDim2.new(1, 0, 0, 96)
@@ -1738,16 +1879,16 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "PASTEL Iridesca"
+    local testFishName = "CARROT Strawberry Orca"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
-    local rarity = "Forgotten"
+    local rarity = "Secret"
     local embedColor = RarityColors[rarity] or 16766763
 
     local testEmbed = {
         embeds = {{
-            title       = "🔒 RENNBLLOYD PRIVATE - WEBHOOK ALL SERVER BERHASIL TERHUBUNG",
+            title       = "🔒 RENNB PRIVATE - SERVER TEST CONNECTED",
             description = string.format("[ **%s** ] has obtained a [ **%s** ]\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
@@ -1756,11 +1897,11 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "🧬 MUTATION", value = "`" .. mutation .. "`",         inline = true },
                 { name = "✨ RARITY",   value = "`" .. rarity .. "`",           inline = true },
                 { name = "👤 PLAYER",   value = "`" .. Player.Name .. "`",      inline = true },
-                { name = "🎲 CHANCE",   value = "`1/25M`",                       inline = true },
-                { name = "⚖️ WEIGHT",   value = "`1.10M kg`",                    inline = true }
+                { name = "🎲 CHANCE",   value = "`1/3M`",                       inline = true },
+                { name = "⚖️ WEIGHT",   value = "`310K kg`",                    inline = true }
             },
             footer = {
-                text = string.format("RENNBLLOYD PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
+                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
             }
         }}
     }
