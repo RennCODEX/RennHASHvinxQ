@@ -221,7 +221,8 @@ Theme = {
 local RarityByRGB = {
     ["rgb(255, 185, 43)"] = "Legendary",
     ["rgb(255, 25, 25)"]  = "Mythical",
-    ["rgb(24, 255, 152)"] = "Secret"
+    ["rgb(24, 255, 152)"] = "Secret",
+    ["rgb(0, 0, 0)"]      = "Forgotten"
 }
 
 local RarityColors = {
@@ -450,40 +451,38 @@ local function cleanFishName(fishName)
     return cleaned
 end
 
-local function isForgottenSeaEaterMatch(fishName)
-    local normalizedRaw = normalizeFishName(fishName)
-    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
-    local target = "sea eater"
-    if normalizedRaw == target or normalizedCleaned == target then
-        return true
-    end
-    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
-        return true
-    end
-    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
-        return true
-    end
-    return false
-end
+local ForgottenFishAliases = {
+    "sea eater",
+    "the sea eater",
+    "forgotten sea eater",
+    "thunderzilla",
+    "the thunderzilla",
+    "forgotten thunderzilla"
+}
 
-local function isForgottenThunderzillaMatch(fishName)
-    local normalizedRaw = normalizeFishName(fishName)
-    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
-    local target = "thunderzilla"
-    if normalizedRaw == target or normalizedCleaned == target then
+local function isForgottenAliasMatch(candidate, alias)
+    if candidate == "" or alias == "" then
+        return false
+    end
+
+    if candidate == alias then
         return true
     end
-    if normalizedRaw ~= "" and normalizedRaw:find(target, 1, true) then
-        return true
-    end
-    if normalizedCleaned ~= "" and normalizedCleaned:find(target, 1, true) then
-        return true
-    end
-    return false
+
+    return candidate:find(alias, 1, true) ~= nil
 end
 
 local function isForgottenFishMatch(fishName)
-    return isForgottenSeaEaterMatch(fishName) or isForgottenThunderzillaMatch(fishName)
+    local normalizedRaw = normalizeFishName(fishName)
+    local normalizedCleaned = normalizeFishName(cleanFishName(fishName))
+
+    for _, alias in ipairs(ForgottenFishAliases) do
+        if isForgottenAliasMatch(normalizedRaw, alias) or isForgottenAliasMatch(normalizedCleaned, alias) then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function extractAssetId(iconString)
@@ -496,6 +495,8 @@ local function extractAssetId(iconString)
 end
 
 local DEFAULT_FISH_IMAGE = "https://i.ibb.co/q38LKrcJ/image.png"
+local THUMBNAIL_RETRY_COUNT = 10
+local THUMBNAIL_RETRY_DELAY = 0.75
 
 local function getThumbnailURL(fishName)
     local cleanedName = cleanFishName(fishName)
@@ -527,7 +528,7 @@ local function getThumbnailURL(fishName)
         assetId
     )
 
-    for attempt = 1, 5 do
+    for attempt = 1, THUMBNAIL_RETRY_COUNT do
         local success, response = pcall(function()
             return requestFunc({
                 Url    = url,
@@ -542,14 +543,18 @@ local function getThumbnailURL(fishName)
 
             local assetData = jsonSuccess and jsonData and jsonData.data and jsonData.data[1]
             if assetData and assetData.imageUrl and assetData.imageUrl ~= "" then
-                if assetData.state == "Completed" or attempt >= 3 then
+                if assetData.state == "Completed" then
+                    return assetData.imageUrl
+                end
+
+                if attempt == THUMBNAIL_RETRY_COUNT then
                     return assetData.imageUrl
                 end
             end
         end
 
-        if attempt < 5 then
-            task.wait(0.6)
+        if attempt < THUMBNAIL_RETRY_COUNT then
+            task.wait(THUMBNAIL_RETRY_DELAY)
         end
     end
 
@@ -586,6 +591,39 @@ local function extractColorFromRichText(text)
         return Color3.fromRGB(rh, gh, bh), string.format("rgb(%d, %d, %d)", rh, gh, bh)
     end
     return Color3.fromRGB(200, 200, 200), "rgb(200, 200, 200)"
+end
+
+local function normalizeRGBKey(rgbString)
+    if type(rgbString) ~= "string" then
+        return ""
+    end
+
+    local r, g, b = rgbString:match("rgb%((%d+),%s*(%d+),%s*(%d+)%)")
+    if not r or not g or not b then
+        return rgbString:lower():gsub("%s+", "")
+    end
+
+    return string.format("rgb(%d,%d,%d)", tonumber(r), tonumber(g), tonumber(b))
+end
+
+local function getRarityFromRGB(rgbString)
+    local direct = RarityByRGB[rgbString]
+    if direct then
+        return direct
+    end
+
+    local normalizedTarget = normalizeRGBKey(rgbString)
+    if normalizedTarget == "" then
+        return nil
+    end
+
+    for rgbKey, rarity in pairs(RarityByRGB) do
+        if normalizeRGBKey(rgbKey) == normalizedTarget then
+            return rarity
+        end
+    end
+
+    return nil
 end
 
 local function parseServerMessage(text)
@@ -1025,27 +1063,30 @@ local function runPopulationLoop()
 end
 
 -- MODIFIKASI: Fungsi untuk menentukan filter yang digunakan
-local function buildCatchEmbed(catchData, rarityLabel, embedColor)
-    local mutation = detectMutation(catchData.fish)
-    local cleanedFish = cleanFishName(catchData.fish)
+local function buildCatchEmbed(catchData, rarityLabel, embedColor, options)
+    options = options or {}
+
+    local mutation = options.mutationLabel or detectMutation(catchData.fish)
+    local cleanedFish = options.fishLabel or cleanFishName(catchData.fish)
+    local displayRarity = options.rarityLabel or rarityLabel
     local thumbnailUrl = getThumbnailURL(catchData.fish)
 
     return {
         embeds = {{
-            title       = "🔒 RENNBFROYA PRIVATE - SERVER HOOK",
-            description = string.format("[**%s**] has obtained a [**%s**]\nCONGRATULATIONS [🎊]", catchData.player, catchData.fish),
+            title       = "🔒 RENNBLLOYD PRIVATE - SERVER HOOK",
+            description = string.format("❝ **%s** ❝ Has Obtained a ❝ **%s** ❝\n✨ 𝗖𝗢𝗡𝗚𝗥𝗔𝗧𝗨𝗟𝗔𝗧𝗜𝗢𝗡𝗦 ✨", catchData.player, catchData.fish),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
                 { name = "🐳 FISH",     value = "`" .. cleanedFish      .. "`", inline = true },
                 { name = "🧬 MUTATION", value = "`" .. mutation         .. "`", inline = true },
-                { name = "✨ RARITY",   value = "`" .. rarityLabel      .. "`", inline = true },
+                { name = "✨ RARITY",   value = "`" .. displayRarity    .. "`", inline = true },
                 { name = "👤 PLAYER",   value = "`" .. catchData.player .. "`", inline = true },
                 { name = "🎲 CHANCE",   value = "`" .. catchData.chance .. "`", inline = true },
                 { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
             },
             footer = {
-                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", catchData.time)
+                text = string.format("🇧🇾 🇷🇪🇳🇳🇧 🇨🇮🇴 🇰🇴🇵🇪🇷🇦🇸🇮 🇲🇪🇷🇦🇭 🇵🇺🇹🇮🇭 • %s", catchData.time)
             }
         }}
     }
@@ -1064,8 +1105,8 @@ local function sendToWebhook(catchData)
         return
     end
 
-    local isForgottenFish = isForgottenFishMatch(catchData.fish)
-    if isForgottenFish then
+    local rarity = getRarityFromRGB(catchData.rgbString)
+    if rarity == "Forgotten" then
         if not rarityFilters["Forgotten"] then
             print("[FISH LOGGER] ⭐️ Skipped: Forgotten - filter disabled")
             return
@@ -1087,7 +1128,6 @@ local function sendToWebhook(catchData)
         return
     end
 
-    local rarity = RarityByRGB[catchData.rgbString]
     if not rarity then return end
 
     local mutation = detectMutation(catchData.fish)
@@ -1136,7 +1176,14 @@ local function sendToWebhook(catchData)
         return
     end
 
-    local embed = buildCatchEmbed(catchData, filterToUse, RarityColors[rarity] or 2067276)
+    local embedOptions = nil
+    if filterToUse == "Eggy Enchant Stone" then
+        embedOptions = {
+            mutationLabel = "Enchant Stone"
+        }
+    end
+
+    local embed = buildCatchEmbed(catchData, filterToUse, RarityColors[rarity] or 2067276, embedOptions)
 
     task.spawn(function()
         pcall(function()
@@ -1888,8 +1935,8 @@ testBtn.MouseButton1Click:Connect(function()
 
     local testEmbed = {
         embeds = {{
-            title       = "🔒 RENNB PRIVATE - SERVER TEST CONNECTED",
-            description = string.format("[ **%s** ] has obtained a [ **%s** ]\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
+            title       = "🔒 RENNBLLOYD PRIVATE - SERVER TEST CONNECTED",
+            description = string.format("❝ **%s** ❝ Has Obtained a ❝ **%s** ❝\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
@@ -1901,7 +1948,7 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "⚖️ WEIGHT",   value = "`310K kg`",                    inline = true }
             },
             footer = {
-                text = string.format("BY RENNBFROYA PT PT TERMURAH • %s", os.date("%d/%m/%Y %H:%M"))
+                text = string.format("🇧🇾 🇷🇪🇳🇳🇧 🇨🇮🇴 🇰🇴🇵🇪🇷🇦🇸🇮 🇲🇪🇷🇦🇭 🇵🇺🇹🇮🇭 • %s", os.date("%d/%m/%Y %H:%M"))
             }
         }}
     }
