@@ -1074,7 +1074,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor, options)
     return {
         embeds = {{
             title       = "🔒 RENNBLLOYD PRIVATE - SERVER HOOK",
-            description = string.format("❝ **%s** ❝ Has Obtained a ❝ **%s** ❝\n✨ 𝗖𝗢𝗡𝗚𝗥𝗔𝗧𝗨𝗟𝗔𝗧𝗜𝗢𝗡𝗦 ✨", catchData.player, catchData.fish),
+            description = string.format("⟬ **%s** ⟭ Has Obtained a ⟬ **%s** ⟭\n✨ 𝗖𝗢𝗡𝗚𝗥𝗔𝗧𝗨𝗟𝗔𝗧𝗜𝗢𝗡𝗦 ✨", catchData.player, catchData.fish),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
@@ -1936,7 +1936,7 @@ testBtn.MouseButton1Click:Connect(function()
     local testEmbed = {
         embeds = {{
             title       = "🔒 RENNBLLOYD PRIVATE - SERVER TEST CONNECTED",
-            description = string.format("❝ **%s** ❝ Has Obtained a ❝ **%s** ❝\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
+            description = string.format("⟬ **%s** ⟭ Has Obtained a ⟬ **%s** ⟭\nWEBHOOK CONNECTED !! ", Player.Name, testFishName),
             color       = embedColor,
             thumbnail   = { url = thumbnailUrl },
             fields = {
