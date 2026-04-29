@@ -1087,7 +1087,7 @@ local function buildCatchEmbed(catchData, rarityLabel, embedColor, options)
                 { name = "⚖️ WEIGHT",   value = "`" .. catchData.weight .. "`", inline = true }
             },
             footer = {
-                text = string.format("BY RENNB CIO KOPERASI MERAH PUTIH • %s", catchData.time)
+                text = string.format("BY FRIERENN PRIVATE BOOST • %s", catchData.time)
             }
         }}
     }
@@ -1949,7 +1949,7 @@ testBtn.MouseButton1Click:Connect(function()
                 { name = "⚖️ WEIGHT",   value = "`1.10M kg`",                    inline = true }
             },
             footer = {
-                text = string.format("BY RENNB CIO KOPERASI MERAH PUTIH • %s", os.date("%d/%m/%Y %H:%M"))
+                text = string.format("BY FRIERENN PRIVATE BOOST • %s", os.date("%d/%m/%Y %H:%M"))
             }
         }}
     }
