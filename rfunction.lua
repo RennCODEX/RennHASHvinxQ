@@ -237,7 +237,7 @@ local Mutations = {
     "Galaxy","Corrupt","Gemstone","Ghost","Lightning","Fairy Dust","Gold","Midnight",
     "Radioactive","Stone","Holographic","Albino","Bloodmoon","Sandy","Acidic",
     "Color Burn","Festive","Frozen","Leviathan Rage","Crystalized","Cupid","Heartbreak","Carrot","Pastel","Blood Moon","Moon Fragment","Purple Moon","Cupid",
-    "Noob","Pemula"
+    "Noob","Pemula","Fire"
 }
 
 ----------------------------------------------------------------
@@ -1927,7 +1927,7 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "NOOB Frostbite Leviathan"
+    local testFishName = "FIRE Frostbite Leviathan"
     local cleanedFish = cleanFishName(testFishName)
     local mutation = detectMutation(testFishName)
     local thumbnailUrl = getThumbnailURL(testFishName)
