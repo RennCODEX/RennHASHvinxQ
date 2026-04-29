@@ -569,7 +569,7 @@ local function detectMutation(fishName)
             return mutation
         end
     end
-    return "None"
+    return "ZERO"
 end
 ----------------------------------------------------------------
 -- UTIL
