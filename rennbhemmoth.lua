@@ -360,12 +360,12 @@ end
 
 local function isEnchantStoneMatch(itemName)
     local normalized = normalizeFishName(itemName)
-    return normalized == "eggy enchant stone"
+    return normalized == "runic enchant stone"
         or normalized:find("enchant stone", 1, true) ~= nil
 end
 
-local function isEggyEnchantStoneMatch(itemName)
-    return normalizeFishName(itemName) == "eggy enchant stone"
+local function isRunicEnchantStoneMatch(itemName)
+    return normalizeFishName(itemName) == "runic enchant stone"
 end
 
 local function buildFishDatabase()
@@ -682,7 +682,7 @@ local rarityFilters = {
     ["Secret"]    = true,
     ["Legend (Crystalized)"] = true,
     ["Ruby (Gemstone)"] = true,
-    ["Eggy Enchant Stone"] = true,
+    ["Runic Enchant Stone"] = true,
     ["Forgotten"] = true
 }
 
@@ -1146,14 +1146,14 @@ local function sendToWebhook(catchData)
         elseif rarityFilters["Ruby (Gemstone)"] then
             filterToUse = "Ruby (Gemstone)"
         end
-    -- Cek apakah Eggy Enchant Stone
-    elseif rarity == "Mythical" and isEggyEnchantStoneMatch(catchData.fish) then
-        if rarityFilters["Eggy Enchant Stone"] and not rarityFilters["Mythical"] then
-            filterToUse = "Eggy Enchant Stone"
-        elseif rarityFilters["Mythical"] then
-            filterToUse = "Mythical"
-        elseif rarityFilters["Eggy Enchant Stone"] then
-            filterToUse = "Eggy Enchant Stone"
+    -- Cek apakah Runic Enchant Stone
+    elseif rarity == "Secret" and isRunicEnchantStoneMatch(catchData.fish) then
+        if rarityFilters["Runic Enchant Stone"] and not rarityFilters["Secret"] then
+            filterToUse = "Runic Enchant Stone"
+        elseif rarityFilters["Secret"] then
+            filterToUse = "Secret"
+        elseif rarityFilters["Runic Enchant Stone"] then
+            filterToUse = "Runic Enchant Stone"
         end
     -- Cek apakah Legend (Crystalized)
     elseif rarity == "Legendary" and mutation == "Crystalized" then
@@ -1178,9 +1178,10 @@ local function sendToWebhook(catchData)
     end
 
     local embedOptions = nil
-    if filterToUse == "Eggy Enchant Stone" then
+    if filterToUse == "Runic Enchant Stone" then
         embedOptions = {
-            mutationLabel = "Enchant Stone"
+            mutationLabel = "None",
+            rarityLabel = "Secret"
         }
     end
 
@@ -1842,7 +1843,7 @@ createRarityCheckbox("Secret",    3, Color3.fromRGB(100, 255, 190), rarityRow)
 createRarityCheckbox("Legend (Crystalized)", 1, Color3.fromRGB(255, 100, 100), rarityRow2)
 createRarityCheckbox("Ruby (Gemstone)", 2, Color3.fromRGB(255, 200, 80), rarityRow2)
 createRarityCheckbox("Forgotten", 3, Color3.fromRGB(90, 210, 255), rarityRow2)
-createRarityCheckbox("Eggy Enchant Stone", 1, Color3.fromRGB(255, 100, 100), rarityRow3)
+createRarityCheckbox("Runic Enchant Stone", 1, Color3.fromRGB(100, 255, 190), rarityRow3)
 
 local webhookSection, webhookBody = makeSection(fishTabPage, "Webhook", 2)
 webhookSection.Size = UDim2.new(1, 0, 0, 96)
@@ -1927,9 +1928,9 @@ testBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    local testFishName = "FIRE Frostbite Leviathan"
-    local cleanedFish = cleanFishName(testFishName)
-    local mutation = detectMutation(testFishName)
+    local testFishName = "Runic Enchant Stone"
+    local cleanedFish = testFishName
+    local mutation = "None"
     local thumbnailUrl = getThumbnailURL(testFishName)
     local rarity = "Secret"
     local embedColor = RarityColors[rarity] or 16766763
