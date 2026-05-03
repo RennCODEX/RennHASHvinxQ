@@ -237,7 +237,7 @@ local Mutations = {
     "Galaxy","Corrupt","Gemstone","Ghost","Lightning","Fairy Dust","Gold","Midnight",
     "Radioactive","Stone","Holographic","Albino","Bloodmoon","Sandy","Acidic",
     "Color Burn","Festive","Frozen","Leviathan Rage","Crystalized","Cupid","Heartbreak","Carrot","Pastel","Blood Moon","Moon Fragment","Purple Moon","Cupid",
-    "Noob","Pemula","Fire"
+    "Noob","Pemula","Fire","Disco","Disko"
 }
 
 ----------------------------------------------------------------
